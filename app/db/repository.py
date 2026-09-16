@@ -22,6 +22,7 @@ Port conventions (docs/port_conventions.md):
 import datetime
 import json
 import math
+from decimal import Decimal
 import re
 import uuid
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -210,6 +211,13 @@ def _decode_record(row: Sequence[Any], attributes: Sequence[Any]) -> dict:
                 decoded[attribute.name] = json.loads(value)
             except ValueError:
                 decoded[attribute.name] = value
+        elif isinstance(value, uuid.UUID):
+            # n8n's Postgres node hands JS strings to downstream code nodes; the
+            # deterministic ports compare ids with JS string equality, so uuids
+            # must surface as strings (js String(uuid) would be "[object Object]").
+            decoded[attribute.name] = str(value)
+        elif isinstance(value, Decimal):
+            decoded[attribute.name] = float(value)
         else:
             decoded[attribute.name] = value
     return decoded

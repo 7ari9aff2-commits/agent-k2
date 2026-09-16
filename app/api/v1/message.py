@@ -123,8 +123,11 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     normalized = normalize_mod.normalize_and_validate(inbound, raw_headers)
 
     # ── L02 Extract K2 Signature Context ───────────────────────────────────────
+    # The port mirrors the n8n webhook-node output shape ({headers, body, query}).
+    webhook_output = {"headers": raw_headers, "body": inbound, "query": {}}
     signature_ctx = stages_pre.extract_k2_signature_context(normalized, {
-        "normalize_validate": normalized, "webhook_incoming_message": inbound, "headers": raw_headers})
+        "normalize_validate": normalized, "webhook_incoming_message": webhook_output,
+        "headers": raw_headers})
     # The router signs the exact bytes it sends (JS JSON.stringify of the envelope).
     # Verify HMAC over those raw received bytes — immune to any re-serialization drift.
     if raw_body:
