@@ -122,3 +122,22 @@ Deferred — not blocking the port.
   payload → the exact n8n 400 Arabic body; well-formed payload with bogus signature → 403
   fail-closed via the live DB RPC (proves Railway → Supabase pooler wiring end to end).
 - NEXT: DRY_RUN flag + shadow-mode comparison against live n8n before flipping the sender URL.
+
+## CUTOVER 2026-09-17 — FastAPI is the system of record
+- agent k2 DEACTIVATED on n8n (user decision); FastAPI on Railway serves production.
+- Channel routers re-pointed to https://core-engine-production-a186.up.railway.app/core-engine/message
+  with the new X-K2-Internal-Token (auth credential replaced by an explicit header):
+  WhatsApp Production - Gupshup, Instagram Channel (provider-agnostic),
+  SuperChat Whatsapp/Instagram/Messenger - Trial. agent k2 stays deactivated as rollback.
+- Live-bugs found and fixed during cutover validation (all pushed + deployed):
+  1. signature: extract needs the n8n webhook-output shape ({headers, body}); HMAC now verified
+     over the exact raw request bytes.
+  2. repository rows: uuids surfaced as strings (JS String() parity), numerics as floats.
+  3. fastapi_app grants: USAGE/EXECUTE on extensions schema.
+  4. graceful degradation: primary/repair LLM failures now render the deterministic policy reply
+     (no 500 to the channel). Verified end-to-end on the test clinic with forced LLM failure.
+  5. total_time_ms rounded for the audit integer column.
+- Test clinic FLOWUP TEST ONLY: registered a signing secret on its whatsapp channel so the full
+  signed path is exercisable.
+- BLOCKER: Novita balance $0 → live messages get the deterministic fallback reply until the
+  account is topped up. Everything else verified green end to end.
