@@ -90,8 +90,9 @@ async def process_patient_message(request: Request,
                                   authorized: bool = Depends(verify_internal_token)) -> K2JSONResponse:
     started = time.time()
     raw_headers = {k.lower(): v for k, v in request.headers.items()}
+    raw_body = await request.body()
     try:
-        body = await request.json()
+        body = json.loads(raw_body) if raw_body else {}
     except Exception:
         body = {}
     if not isinstance(body, dict):
@@ -100,7 +101,7 @@ async def process_patient_message(request: Request,
     logger.info("k2.request.start", extra={"correlation_id": correlation_id,
                                            "conversation_id": body.get("conversation_id")})
     try:
-        out = await _run(body, raw_headers)
+        out = await _run(body, raw_headers, raw_body)
         logger.info("k2.request.done", extra={"correlation_id": correlation_id,
                                               "elapsed_ms": int((time.time() - started) * 1000),
                                               "response_code": out.get("response_code")})
@@ -117,13 +118,17 @@ async def process_patient_message(request: Request,
                                                         "correlation_id": correlation_id})
 
 
-async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str]) -> Dict[str, Any]:
+async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: bytes = b"") -> Dict[str, Any]:
     # ── L01 Normalize & Validate ────────────────────────────────────────────────
     normalized = normalize_mod.normalize_and_validate(inbound, raw_headers)
 
     # ── L02 Extract K2 Signature Context ───────────────────────────────────────
     signature_ctx = stages_pre.extract_k2_signature_context(normalized, {
         "normalize_validate": normalized, "webhook_incoming_message": inbound, "headers": raw_headers})
+    # The router signs the exact bytes it sends (JS JSON.stringify of the envelope).
+    # Verify HMAC over those raw received bytes — immune to any re-serialization drift.
+    if raw_body:
+        signature_ctx["k2_signed_payload"] = raw_body.decode("utf-8", errors="replace")
 
     # ── L04 IF Normalize Error → Respond Invalid Inbound Payload (400) ─────────
     if conditions_pre.if_normalize_error(normalized):
