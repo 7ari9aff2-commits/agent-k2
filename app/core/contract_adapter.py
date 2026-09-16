@@ -1,0 +1,332 @@
+"""Contract Adapter v4→v3 + Derive Actions — faithful 1:1 port.
+
+Source nodes: K2 Contract Adapter v4 to v3 (extracted/code/K2_Contract_Adapter_v4_to_v3.js)
+              Derive Actions (Deterministic) (extracted/code/Derive_Actions_Deterministic.js)
+
+Two node bodies live here:
+
+- ``contract_v4_to_v3`` — finds the agent's v4 dialogue contract (``k2.dialogue.v4``)
+  serialized inside one of the item's candidate string fields, parses it, projects
+  it to the legacy ``k2.dialogue.v3`` shape, and re-serializes it back into the
+  item (``output``/``text`` + the originating key). Derives ``certainty`` from the
+  numeric ``confidence`` and ``references_prior_conversation`` from the
+  reference/``follow_up`` signal (the 2026-09-07 FIX comments in the JS).
+  Non-v4 / unparseable payloads pass through untouched with an ``_adapter``
+  marker — the JS quirk that a payload which parses to a JS-falsy value
+  (``0``/``''``/``false``/``null``) reports ``unparseable`` while any other
+  non-v4 document reports ``not_v4`` is preserved.
+- ``derive_actions`` — maps the authoritative ``response_code`` to the concrete
+  action list consumed by the execution phase, choosing between the upstream
+  System Orchestrator decision and the local envelope exactly like the JS.
+
+Pure functions: no I/O, no logging, stdlib only.
+"""
+
+import json
+import re
+from typing import TypedDict
+
+
+class DeriveActionsInputs(TypedDict, total=False):
+    """Node outputs consumed by the JS via ``$(NodeName).first().json`` / ``$json``.
+
+    - ``current``              ← ``$json`` — the current item (required in practice).
+      Fields read: ``output``, ``system_decision``, ``operation_claim_decision``,
+      ``operation_claim_blocked``, ``operation_replay``, ``response_code``. It is
+      also spread at the top of the output.
+    - ``system_orchestrator``  ← ``$('System Orchestrator (Policy)').first().json`` —
+      ``system_decision`` (the upstream decision).
+    - ``normalize_validate``   ← ``$('Normalize & Validate').first().json`` —
+      ``clinic_id`` / ``conversation_id`` / ``patient_id`` for ``audit_context``.
+      All keys optional: an absent node behaves exactly like the JS try/catch
+      (yields ``{}``).
+    """
+
+    current: dict
+    system_orchestrator: dict
+    normalize_validate: dict
+
+
+# ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
+
+def _dict(value):
+    """Property-access coercion: non-object values read as empty objects (JS never throws here)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _truthy(value):
+    """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
+    if isinstance(value, float) and value != value:  # NaN
+        return False
+    if isinstance(value, (dict, list)):
+        return True
+    return bool(value)
+
+
+def _js_and(a, b):
+    """JS ``a && b``: returns a when a is falsy, else b."""
+    return a if not _truthy(a) else b
+
+
+def _js_or(*values):
+    """JS ``a || b || c`` chain: first JS-truthy value, else the last value (or None)."""
+    if not values:
+        return None
+    for v in values[:-1]:
+        if _truthy(v):
+            return v
+    return values[-1]
+
+
+def _first_not_none(*values):
+    """JS ``a ?? b ?? c`` chain: first value that is not null/undefined."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _prop(obj, key):
+    """Property read on a value that may not be an object (JS yields undefined, never throws)."""
+    return obj.get(key) if isinstance(obj, dict) else None
+
+
+def _json_stringify(value):
+    """JS ``JSON.stringify`` — compact separators, non-ASCII kept literal."""
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
+_UUID_V4ISH_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
+
+_CANDIDATE_KEYS = ('output', 'text', 'agent_raw_output', 'raw', 'data')
+
+
+# ── Node 1: K2 Contract Adapter v4 to v3 ──
+def contract_v4_to_v3(contract_v4: dict, extra: dict | None = None) -> dict:
+    """Source node: K2 Contract Adapter v4 to v3 (extracted/code/K2_Contract_Adapter_v4_to_v3.js).
+
+    Mirrors the JS node body and returns the inner json dict (n8n's
+    ``[{ json: out }][0].json``).
+
+    ``contract_v4`` is the inbound item json (JS ``$input.item.json || {}``); the
+    v4 document lives serialized inside one of the candidate string fields
+    (``output``/``text``/``agent_raw_output``/``raw``/``data``) — exactly like the
+    JS. ``extra`` is accepted for pipeline-runner signature compatibility but is
+    unused: the JS node reads no other node context.
+    """
+    del extra  # the JS node reads no external context; kept for the runner's call signature
+    item = _dict(_js_or(contract_v4, {}))
+
+    key = None
+    for k in _CANDIDATE_KEYS:
+        v = item.get(k)
+        if isinstance(v, str) and v.strip().startswith('{'):
+            key = k
+            break
+
+    parsed = None
+    if key is not None:
+        try:
+            parsed = json.loads(item[key])
+        except Exception:
+            parsed = None
+
+    if not _truthy(parsed) or not isinstance(parsed, dict) or parsed.get('schema_version') != 'k2.dialogue.v4':
+        # JS: parsed ? 'not_v4' : 'unparseable' — a JSON document that parses to a
+        # falsy value (0/''/false/null) reports 'unparseable'; keep the quirk.
+        reason = 'not_v4' if _truthy(parsed) else 'unparseable'
+        out = dict(item)
+        out['_adapter'] = {'action': 'passthrough', 'reason': reason}
+        return out
+
+    e = _dict(parsed.get('entities'))
+    ref = e.get('reference').strip() if isinstance(e.get('reference'), str) else ''
+    is_uuid = bool(_UUID_V4ISH_RE.fullmatch(ref))
+
+    # FIX (2026-09-07): v4 has no `certainty` enum, only numeric `confidence`.
+    # Derive it from the model's own confidence score instead of discarding it.
+    confidence = parsed.get('confidence')
+    confidence_num = confidence if (isinstance(confidence, (int, float)) and not isinstance(confidence, bool)) else None
+    derived_certainty = None if confidence_num is None else (
+        'certain' if confidence_num >= 0.75 else ('probable' if confidence_num >= 0.4 else 'uncertain'))
+
+    # FIX (2026-09-07): v4 has no direct references_prior_conversation signal.
+    # Derive a proxy: explicit reference/booking number, or a follow_up turn.
+    turn_obj = _js_and(parsed.get('turn'), _prop(parsed.get('turn'), 'relation_to_previous_turn'))
+    relation = _js_or(turn_obj, 'none')
+    derived_prior_reference = len(ref) > 0 or relation == 'follow_up'
+
+    sel_obj = parsed.get('selection')
+    conf_obj = parsed.get('confirmation')
+    op = parsed.get('operation_proposal')
+    op_type = _prop(op, 'type')
+    v3 = {
+        'schema_version': 'k2.dialogue.v3',
+        'phase': 'understand',
+        'reply': _js_or(parsed.get('reply'), ''),
+        'turn': {
+            'intent': _js_or(_js_and(parsed.get('turn'), _prop(parsed.get('turn'), 'intent')), 'other'),
+            'relation_to_previous_turn': relation,
+            'certainty': derived_certainty,
+            'confidence': confidence_num,
+        },
+        'confirmation': {'intent': _js_or(_js_and(conf_obj, _prop(conf_obj, 'intent')), 'none')},
+        'selection': {
+            'kind': _js_or(_js_and(sel_obj, _prop(sel_obj, 'kind')), 'none'),
+            'rank': _first_not_none(_js_and(sel_obj, _prop(sel_obj, 'rank'))),
+            'date': _js_or(e.get('date'), None),
+            'time': _js_or(e.get('time'), None),
+        },
+        'entities': {
+            'doctor_name': _js_or(e.get('doctor_name'), None),
+            'service_name': _js_or(e.get('service_name'), None),
+            'date': _js_or(e.get('date'), None),
+            'time': _js_or(e.get('time'), None),
+            'visit_type': _js_or(e.get('visit_type'), None),
+            'patient_name': _js_or(e.get('patient_name'), None),
+            'patient_phone': _js_or(e.get('patient_phone'), None),
+            'patient_age': e.get('patient_age') if (isinstance(e.get('patient_age'), (int, float)) and not isinstance(e.get('patient_age'), bool)) else None,
+            'patient_address': _js_or(e.get('patient_address'), None),
+            'appointment_id': ref if is_uuid else None,
+            'booking_number': ref if (ref and not is_uuid) else None,
+        },
+        'operation_proposal': {
+            'type': '' if (not _truthy(op) or not _truthy(op_type) or op_type == 'none') else op_type,
+            'requested': bool(_truthy(op) and isinstance(op, dict) and op.get('requested') is True),
+        },
+        'references_prior_conversation': derived_prior_reference,
+        'escalate': bool(_truthy(parsed.get('escalate'))),
+        'handoff_reason': _js_or(parsed.get('escalate'), None),
+        'ambiguous': parsed.get('ambiguous') if isinstance(parsed.get('ambiguous'), list) else [],
+    }
+
+    out = dict(item)
+    if key is not None:
+        out[key] = _json_stringify(v3)
+    out['output'] = _json_stringify(v3)
+    out['text'] = _json_stringify(v3)
+    out['_adapter'] = {
+        'action': 'v4_to_v3',
+        'escalated_reason': v3['handoff_reason'],
+        'ambiguous': v3['ambiguous'],
+        'derived_certainty': derived_certainty,
+        'derived_prior_reference': derived_prior_reference,
+    }
+    return out
+
+
+# ── Node 2: Derive Actions (Deterministic) — null-safe version ──
+def derive_actions(inputs: dict) -> dict:
+    """Source node: Derive Actions (Deterministic) (extracted/code/Derive_Actions_Deterministic.js).
+
+    Mirrors the JS node body and returns the inner json dict (n8n's
+    ``[{ json: out }][0].json``). See the module docstring for the ``inputs`` schema.
+    """
+    inputs = _dict(inputs)
+    current = _dict(inputs.get('current'))  # JS $json
+
+    output = _js_or(current.get('output'), {})
+    # JS: try { upstreamDecision = $('System Orchestrator (Policy)').first().json.system_decision || {}; } catch {}
+    upstream_decision = _js_or(_dict(_dict(_js_or(inputs.get('system_orchestrator'), {})).get('system_decision')), {})
+
+    local_sd = current.get('system_decision')
+    local_decision = local_sd if isinstance(local_sd, dict) else {}
+
+    # Claim-blocked/replay paths must use the current local Response Policy envelope,
+    # not the stale upstream Orchestrator decision.
+    has_claim_outcome = bool(
+        _truthy(current.get('operation_claim_decision'))
+        or _truthy(current.get('operation_claim_blocked'))
+        or _truthy(current.get('operation_replay'))
+    )
+    if has_claim_outcome:
+        decision = local_decision if len(local_decision) else upstream_decision
+    else:
+        decision = upstream_decision if len(upstream_decision) else local_decision
+
+    # Null-safe inbound context. Normalize & Validate always returns 1 item in normal flow,
+    # but a missing item is treated as an empty context to avoid throwing.
+    ctx = _dict(_js_or(inputs.get('normalize_validate'), {}))
+
+    actions = []
+    response_code = _js_or(decision.get('response_code'), current.get('response_code'), _dict(output).get('response_code'), 'CONVERSATION_ONLY')
+    booking_number = _js_or(
+        _dict(output).get('booking_number'),
+        decision.get('booking_number'),
+        _js_and(decision.get('booking_context'), _prop(decision.get('booking_context'), 'booking_number')),
+        None,
+    )
+    decision_ct = decision.get('confirmation_target')
+    confirmation_target_expires = _js_or(_js_and(decision_ct, _prop(decision_ct, 'expires_at')), None)
+
+    if response_code == 'HANDOFF_REQUIRED':
+        actions.append({'type': 'handoff', 'reason': 'agent_escalation', 'priority': 'high'})
+    elif response_code == 'APPOINTMENT_CREATED':
+        actions.append({'type': 'send_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number})
+    elif response_code == 'IDEMPOTENT_REPLAY':
+        if decision.get('action') == 'create_appointment':
+            actions.append({'type': 'send_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
+        elif decision.get('action') == 'reschedule_appointment':
+            actions.append({'type': 'send_reschedule_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
+        else:
+            actions.append({'type': 'send_cancellation_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
+    elif response_code == 'CANCEL_COMPLETED':
+        actions.append({'type': 'send_cancellation_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number})
+    elif response_code == 'RESCHEDULE_COMPLETED':
+        actions.append({'type': 'send_reschedule_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number,
+                        'new_slot_id': _js_or(_js_and(decision_ct, _prop(decision_ct, 'new_slot_id')), None)})
+    elif response_code == 'AVAILABILITY_RESULTS':
+        actions.append({'type': 'send_conversation_reply', 'reason': 'availability_results'})
+    elif response_code == 'CONVERSATION_ONLY':
+        actions.append({'type': 'send_conversation_reply'})
+    elif response_code == 'CONFIRMATION_REQUIRED':
+        actions.append({'type': 'request_confirmation', 'target': _js_or(decision_ct, None), 'expires_at': confirmation_target_expires})
+    elif response_code == 'CONFIRMATION_EXPIRED':
+        actions.append({'type': 'refresh_booking_confirmation', 'reason': 'confirmation_target_expired_or_changed'})
+    elif response_code == 'MISSING_REQUIRED_FIELDS':
+        actions.append({'type': 'collect_required_fields', 'fields': _js_or(decision.get('missing_fields'), [])})
+    elif response_code in ('APPOINTMENT_CREATION_FAILED', 'CANCEL_FAILED', 'CANCELLATION_NOT_ALLOWED', 'APPOINTMENT_NOT_FOUND_OR_NOT_OWNED', 'CANCEL_RETRYABLE'):
+        rc_str = _js_string_safe(response_code)
+        operation = 'cancel_appointment' if (rc_str.startswith('CANCEL') or 'CANCELLATION' in rc_str or 'APPOINTMENT_NOT_FOUND' in rc_str) else 'create_appointment'
+        actions.append({'type': 'send_operation_failure', 'operation': operation})
+    elif response_code in ('RESCHEDULE_NOT_ALLOWED', 'RESCHEDULE_CONFLICT', 'RESCHEDULE_RETRYABLE'):
+        actions.append({'type': 'send_operation_failure', 'operation': 'reschedule_appointment'})
+    elif response_code == 'SLOT_UNAVAILABLE':
+        availability_alternatives = _dict(output).get('availability_alternatives')
+        slot_lookup_alts = _prop(_dict(output).get('deterministic_slot_lookup'), 'alternatives')
+        alternatives = availability_alternatives if isinstance(availability_alternatives, list) else (slot_lookup_alts if isinstance(slot_lookup_alts, list) else [])
+        actions.append({
+            'type': 'offer_available_slots',
+            'operation': 'create_appointment' if decision.get('action') == 'create_appointment' else 'reschedule_appointment',
+            'requested_time_unavailable': _dict(output).get('availability_requested_time_unavailable') is True,
+            'alternatives': alternatives,
+        })
+    elif response_code == 'AVAILABILITY_SOURCE_ERROR':
+        actions.append({'type': 'send_availability_source_error'})
+    else:
+        actions.append({'type': 'send_policy_reply', 'response_code': response_code})
+
+    out = dict(current)
+    out['system_decision'] = decision
+    out['response_code'] = response_code
+    out['escalation_requested'] = decision.get('response_code') == 'HANDOFF_REQUIRED' and decision.get('escalation_requested') is True
+    out['actions'] = actions
+    out['audit_context'] = {
+        'clinic_id': ctx.get('clinic_id'),
+        'conversation_id': ctx.get('conversation_id'),
+        'patient_id': ctx.get('patient_id'),
+        'response_code': decision.get('response_code'),
+        'confirmation_expires_at': confirmation_target_expires,
+    }
+    return out
+
+
+def _js_string_safe(value):
+    """String coercion for str-method access; JS would throw on non-strings here, the port coerces."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return str(value)

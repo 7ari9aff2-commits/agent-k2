@@ -1,0 +1,13 @@
+{
+ "name": "Respond Unauthorized Context",
+ "type": "n8n-nodes-base.respondToWebhook",
+ "typeVersion": 1.5,
+ "parameters": {
+  "respondWith": "json",
+  "responseBody": "={{ JSON.stringify({ ok: false, error_code: $json.security_error || ($json.security_reject === true ? 'PATIENT_CONVERSATION_OWNERSHIP_MISMATCH' : 'PATIENT_CONVERSATION_OWNERSHIP_MISMATCH'), message: $json.security_error === 'CLINIC_NOT_FOUND' ? 'تعذر العثور على العيادة المطلوبة' : 'تعذر التحقق من بيانات المحادثة' }) }}",
+  "options": {
+   "responseCode": "={{ $json.security_error === 'CLINIC_NOT_FOUND' ? 404 : 403 }}"
+  }
+ },
+ "credentials": []
+}

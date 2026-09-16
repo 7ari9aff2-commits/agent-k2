@@ -1,0 +1,33 @@
+{
+ "name": "Save Conversation State (retry) (v18)",
+ "type": "n8n-nodes-base.httpRequest",
+ "typeVersion": 4.5,
+ "parameters": {
+  "method": "POST",
+  "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/k2_save_conversation_state",
+  "authentication": "genericCredentialType",
+  "genericAuthType": "httpCustomAuth",
+  "sendHeaders": true,
+  "headerParameters": {
+   "parameters": [
+    {
+     "name": "Content-Type",
+     "value": "application/json"
+    },
+    {
+     "name": "Prefer",
+     "value": "return=representation, resolution=merge-duplicates"
+    }
+   ]
+  },
+  "sendBody": true,
+  "specifyBody": "json",
+  "jsonBody": "={{ { p_conversation_id: String($(\"Normalize & Validate\").first().json.conversation_id || \"\"), p_state_data: $(\"Build Retry RPC Body (v18)\").first().json.rpc_body.p_state_data || {}, p_previous_state_version: Number($(\"Build Retry RPC Body (v18)\").first().json.rpc_body.p_previous_state_version || 0) } }}",
+  "options": {
+   "timeout": 10000
+  }
+ },
+ "credentials": [
+  "httpCustomAuth"
+ ]
+}

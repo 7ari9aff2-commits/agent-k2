@@ -1,0 +1,11 @@
+{
+ "name": "Persist Presented Offer (Deterministic)",
+ "type": "n8n-nodes-base.postgres",
+ "parameters": {
+  "operation": "executeQuery",
+  "query": "WITH in_row AS (\n  SELECT\n    CASE WHEN $1::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN $1::uuid ELSE NULL END AS conversation_id,\n    CASE WHEN $3::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN $3::uuid ELSE NULL END AS clinic_id,\n    NULLIF($4::text, '') AS patient_id,\n    $2::jsonb AS offer\n),\nupd AS (\n  UPDATE conversation_state cs\n  SET state_data = jsonb_set(jsonb_set(cs.state_data, '{presented_offer}', in_row.offer, true), '{pending_offer}', in_row.offer, true)\n  FROM in_row\n  WHERE in_row.conversation_id IS NOT NULL\n    AND in_row.clinic_id IS NOT NULL\n    AND cs.conversation_id = in_row.conversation_id\n    AND EXISTS (\n      SELECT 1 FROM conversations c\n      WHERE c.id = cs.conversation_id\n        AND c.clinic_id = in_row.clinic_id\n        AND (in_row.patient_id IS NULL OR c.patient_id::text = in_row.patient_id)\n        AND c.deleted_at IS NULL\n    )\n  RETURNING cs.conversation_id\n)\nSELECT (SELECT count(*) FROM upd)::int AS offer_persisted, in_row.offer AS presented_offer_write FROM in_row;",
+  "options": {
+   "queryReplacement": "={{ [ String($('Get Available Slots Input').first().json.conversation_id || \"\"), JSON.stringify($json.presented_offer_write ?? null), String($json.clinic_id || \"\"), String($('Get Available Slots Input').first().json.patient_id || \"\") ] }}"
+  }
+ }
+}

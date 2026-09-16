@@ -1,0 +1,29 @@
+{
+ "name": "IF Contract Needs Repair",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   },
+   "conditions": [
+    {
+     "id": "k2p2repair0001",
+     "leftValue": "={{ $json._contract_repair_needed === true }}",
+     "rightValue": true,
+     "operator": {
+      "type": "boolean",
+      "operation": "true"
+     }
+    }
+   ],
+   "combinator": "and"
+  },
+  "options": {}
+ },
+ "credentials": []
+}

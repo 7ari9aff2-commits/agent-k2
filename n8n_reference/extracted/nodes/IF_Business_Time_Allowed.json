@@ -1,0 +1,29 @@
+{
+ "name": "IF Business Time Allowed",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "business-time-allowed",
+     "leftValue": "={{ $json.business_time_allowed }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": true
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

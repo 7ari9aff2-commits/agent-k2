@@ -1,0 +1,478 @@
+{
+ "id": "6467rQRBEA5fWc0l",
+ "name": "k2 - get_available_slots (deterministic)",
+ "active": true,
+ "isArchived": false,
+ "versionId": "88326768-5ea8-431d-bd9f-e8988378b095",
+ "activeVersionId": "88326768-5ea8-431d-bd9f-e8988378b095",
+ "triggerCount": 0,
+ "nodeCount": 12,
+ "createdAt": "2026-08-19T08:26:57.028Z",
+ "updatedAt": "2026-09-06T13:14:57.875Z",
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true,
+  "errorWorkflow": "KmQZ9bXmmP1YEZht",
+  "saveExecutionProgress": true,
+  "saveDataErrorExecution": "all"
+ },
+ "tags": [],
+ "parentFolderId": null,
+ "description": "Deterministic slot lookup for the Check Doctor Availability tool: resolves clinic timezone, calls rpc_get_available_slots, matches exact and nearest slots, and persists the presented offer to conversation_state so acceptance binds next turn.",
+ "scopes": [
+  "execution:reveal",
+  "workflow:create",
+  "workflow:delete",
+  "workflow:disableRedaction",
+  "workflow:enableRedaction",
+  "workflow:execute",
+  "workflow:execute-chat",
+  "workflow:export",
+  "workflow:import",
+  "workflow:list",
+  "workflow:move",
+  "workflow:publish",
+  "workflow:read",
+  "workflow:share",
+  "workflow:unpublish",
+  "workflow:unshare",
+  "workflow:update"
+ ],
+ "canExecute": true,
+ "connections": {
+  "Get Available Slots Input": {
+   "main": [
+    [
+     {
+      "node": "Resolve Clinic Timezone",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call rpc_get_available_slots (Deterministic)": {
+   "main": [
+    [
+     {
+      "node": "Match & Analyze Slots (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Match & Analyze Slots (Deterministic)": {
+   "main": [
+    [
+     {
+      "node": "Needs Schedule Fallback?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Needs Schedule Fallback?": {
+   "main": [
+    [
+     {
+      "node": "Check Doctor Weekly Schedule (Fallback)",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Build Final Response (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Doctor Weekly Schedule (Fallback)": {
+   "main": [
+    [
+     {
+      "node": "Build Final Response (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Resolve Clinic Timezone": {
+   "main": [
+    [
+     {
+      "node": "Prepare Search Window",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Final Response (Deterministic)": {
+   "main": [
+    [
+     {
+      "node": "Build Presented Offer (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Presented Offer (Deterministic)": {
+   "main": [
+    [
+     {
+      "node": "Persist Presented Offer (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Persist Presented Offer (Deterministic)": {
+   "main": [
+    [
+     {
+      "node": "Return Availability Result (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Search Window": {
+   "main": [
+    [
+     {
+      "node": "Slot Input Valid?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Slot Input Valid?": {
+   "main": [
+    [
+     {
+      "node": "Match & Analyze Slots (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Call rpc_get_available_slots (Deterministic)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodes": [
+  {
+   "parameters": {
+    "workflowInputs": {
+     "values": [
+      {
+       "name": "clinic_id"
+      },
+      {
+       "name": "doctor_id"
+      },
+      {
+       "name": "service_id"
+      },
+      {
+       "name": "requested_date"
+      },
+      {
+       "name": "requested_time"
+      },
+      {
+       "name": "search_range_days"
+      },
+      {
+       "name": "timezone"
+      },
+      {
+       "name": "search_mode"
+      },
+      {
+       "name": "conversation_id"
+      },
+      {
+       "name": "patient_id"
+      }
+     ]
+    }
+   },
+   "id": "ab631b58-c923-4863-b264-83a7dd8466ed",
+   "name": "Get Available Slots Input",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    -1120,
+    96
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const trig = $json || {};\nconst requestedDate = String(trig.requested_date || '').trim();\nconst requestedTimeRaw = String(trig.requested_time || '').trim();\nconst searchMode = String(trig.search_mode || '').trim().toLowerCase();\nconst nearbySearch = ['nearby_alternatives', 'nearby', 'date_alternative'].includes(searchMode);\nconst rangeDaysRaw = parseInt(trig.search_range_days, 10);\nconst requestedRangeDays = Number.isFinite(rangeDaysRaw) && rangeDaysRaw > 0 ? rangeDaysRaw : 3;\n// Keep the window bounded. Nearby searches may look farther than a normal exact-day lookup,\n// but never beyond 14 local calendar days in one RPC call.\nconst rangeDays = Math.min(14, nearbySearch ? Math.max(7, requestedRangeDays) : requestedRangeDays);\nconst uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nif (!uuidPattern.test(String(trig.clinic_id || '')) || !uuidPattern.test(String(trig.doctor_id || ''))) {\n  return [{ json: { ...trig, input_error: 'INVALID_OR_MISSING_IDENTIFIER', start_date: null, end_date: null, requested_datetime: null } }];\n}\nconst clinicTimezone = String(trig.clinic_timezone || '').trim();\nconst requestedTimezone = clinicTimezone || String(trig.timezone || '').trim();\nlet timezone = requestedTimezone;\nlet timezoneValid = false;\ntry {\n  if (requestedTimezone) {\n    new Intl.DateTimeFormat('en-US', { timeZone: requestedTimezone }).format(new Date());\n    timezoneValid = true;\n  }\n} catch (_) {\n  timezoneValid = false;\n}\nif (!timezoneValid) {\n  return [{ json: {\n    ...trig,\n    timezone: null,\n    timezone_source: 'clinic_timezone_invalid_or_missing',\n    input_error: 'CLINIC_TIMEZONE_NOT_CONFIGURED',\n    start_date: null,\n    end_date: null,\n    requested_datetime: null\n  } }];\n}\n\nconst pad = n => String(n).padStart(2, '0');\nconst addDaysToDateString = (dateString, days) => {\n  const [year, month, day] = dateString.split('-').map(Number);\n  const d = new Date(Date.UTC(year, month - 1, day));\n  d.setUTCDate(d.getUTCDate() + days);\n  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;\n};\nconst offsetForLocalWallClock = (tz, dateString, timeString) => {\n  const [year, month, day] = dateString.split('-').map(Number);\n  const [hour, minute, second] = timeString.split(':').map(Number);\n  const guessUtcMs = Date.UTC(year, month - 1, day, hour, minute, second);\n  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(guessUtcMs));\n  const value = Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));\n  const localAsUtcMs = Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day), Number(value.hour), Number(value.minute), Number(value.second));\n  const offsetMinutes = Math.round((localAsUtcMs - guessUtcMs) / 60000);\n  const sign = offsetMinutes >= 0 ? '+' : '-';\n  const absolute = Math.abs(offsetMinutes);\n  return `${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;\n};\n\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(requestedDate)) {\n  return [{ json: { ...trig, timezone, timezone_source: 'clinic_configuration', input_error: 'INVALID_OR_MISSING_DATE', start_date: null, end_date: null, requested_datetime: null } }];\n}\n\nconst startDate = requestedDate;\nconst endDate = addDaysToDateString(requestedDate, rangeDays);\nlet requestedDatetime = null;\nif (requestedTimeRaw) {\n  let t = requestedTimeRaw;\n  if (/^\\d{2}:\\d{2}$/.test(t)) t += ':00';\n  if (/^\\d{2}:\\d{2}:\\d{2}$/.test(t)) {\n    let offset = '+00:00';\n    try { offset = offsetForLocalWallClock(timezone, requestedDate, t); } catch (_) {}\n    requestedDatetime = `${requestedDate}T${t}${offset}`;\n  }\n}\n\nreturn [{ json: { ...trig, search_mode: searchMode || 'requested_window', nearby_search: nearbySearch, timezone, timezone_source: 'clinic_configuration', input_error: null, start_date: startDate, end_date: endDate, requested_datetime: requestedDatetime } }];"
+   },
+   "id": "2ef4a104-4b65-4fd8-83f1-3c2fc93c4580",
+   "name": "Prepare Search Window",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -896,
+    96
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/rpc_get_available_slots",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ p_clinic_id: $json.clinic_id, p_start_date: $json.start_date, p_end_date: $json.end_date, p_doctor_id: $json.doctor_id || null, p_service_id: $json.service_id || null }) }}",
+    "options": {
+     "timeout": 15000
+    }
+   },
+   "id": "819f642c-e371-4487-bc73-d951aeee2742",
+   "name": "Call rpc_get_available_slots (Deterministic)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    -672,
+    96
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "alwaysOutputData": true,
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "slFWnFv3On48Ye52",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "const rawItems = $input.all().map(i => i.json);\nconst prep = $('Prepare Search Window').item.json;\nconst errorItem = rawItems.find(it => it && it.error);\nconst common = {\n  requested_date: prep.requested_date || null,\n  requested_datetime: prep.requested_datetime || null,\n  clinic_id: prep.clinic_id,\n  doctor_id: prep.doctor_id,\n  service_id: prep.service_id,\n  search_mode: prep.search_mode || 'requested_window',\n  nearby_search: prep.nearby_search === true,\n  search_window_start: prep.start_date || null,\n  search_window_end: prep.end_date || null,\n  timezone: prep.timezone || null\n};\nif (prep.input_error) {\n  return [{ json: { success: false, matched: null, exact_slot: null, nearest_slots: [], available_slots_today: [], all_slots_count: 0, needs_schedule_fallback: false, error_code: prep.input_error, message: 'تاريخ الحجز غير واضح، محتاجين توضيح من المريض', requested_datetime: null, ...common } }];\n}\nif (errorItem) {\n  return [{ json: { success: false, matched: null, exact_slot: null, nearest_slots: [], available_slots_today: [], all_slots_count: 0, needs_schedule_fallback: false, error_code: 'RPC_ERROR', message: 'تعذر جلب الأوقات المتاحة حاليا', ...common } }];\n}\n\nconst slots = rawItems.filter(s => s && s.slot_id);\nconst requestedDate = prep.requested_date;\nconst requestedDatetime = prep.requested_datetime;\nconst requestedTime = String(prep.requested_time || '').trim().slice(0, 5);\nconst displayTimezone = String(prep.timezone || 'UTC').trim() || 'UTC';\nconst localWallClock = (iso) => {\n  try {\n    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: displayTimezone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso));\n    const v = Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));\n    return { date: `${v.year}-${v.month}-${v.day}`, time: `${v.hour}:${v.minute}` };\n  } catch (_) { return { date: String(iso || '').slice(0, 10), time: String(iso || '').slice(11, 16) }; }\n};\nconst slotLocal = (s) => localWallClock(s?.start_time);\nconst slotsForRequestedDay = slots.filter(s => slotLocal(s).date === requestedDate);\nconst slotDiffMinutes = (s, refMs) => Math.round(Math.abs(new Date(s.start_time).getTime() - refMs) / 60000);\nconst toPublicSlot = (s, refMs = null) => ({\n  slot_id: s.slot_id,\n  slot_status: 'available',\n  clinic_id: s.clinic_id || prep.clinic_id,\n  doctor_id: s.doctor_id || prep.doctor_id,\n  service_id: s.service_id || prep.service_id,\n  start_time: s.start_time,\n  end_time: s.end_time,\n  ...(refMs === null ? {} : { diff_minutes: slotDiffMinutes(s, refMs) })\n});\nconst requestedWallClockMatches = (s) => {\n  const local = slotLocal(s);\n  return Boolean(requestedDate && requestedTime && local.date === requestedDate && local.time === requestedTime);\n};\n\nlet matched = false;\nlet exactSlot = null;\nlet nearestSlots = [];\nlet errorCode = null;\nlet message = null;\nif (requestedDatetime) {\n  const reqMs = new Date(requestedDatetime).getTime();\n  // Minute-granularity match first: the patient confirms HH:MM while slots may start\n  // at HH:MM:SS — a sub-minute offset must not fail the exact match.\n  const exact = slots.find(s => requestedWallClockMatches(s))\n    || slots.find(s => {\n      const startMs = new Date(s.start_time).getTime();\n      const endMs = new Date(s.end_time).getTime();\n      return reqMs >= startMs - 60000 && reqMs < endMs;\n    });\n  if (exact) {\n    matched = true;\n    exactSlot = toPublicSlot(exact);\n    message = 'الوقت المطلوب متاح';\n  } else {\n    nearestSlots = slots.filter(s => !requestedWallClockMatches(s)).map(s => toPublicSlot(s, reqMs)).sort((a,b) => a.diff_minutes - b.diff_minutes).slice(0, 6);\n    errorCode = 'REQUESTED_TIME_NOT_AVAILABLE';\n    message = nearestSlots.length ? 'الوقت المطلوب غير متاح، وهذه أقرب المواعيد المتاحة' : 'الوقت المطلوب غير متاح حاليا';\n  }\n} else {\n  matched = slotsForRequestedDay.length > 0;\n  if (matched) {\n    message = 'تم عرض الأوقات المتاحة لهذا اليوم';\n  } else {\n    const anchorMs = Date.parse(`${requestedDate}T12:00:00Z`);\n    nearestSlots = slots.filter(s => slotLocal(s).date !== requestedDate).map(s => toPublicSlot(s, anchorMs)).sort((a,b) => a.diff_minutes - b.diff_minutes).slice(0, 6);\n    errorCode = 'NO_AVAILABLE_SLOTS';\n    message = nearestSlots.length ? 'لا توجد مواعيد في اليوم المطلوب، وهذه أقرب المواعيد المتاحة' : 'لا توجد مواعيد متاحة في نافذة البحث';\n  }\n}\nconst availableSlotsToday = slotsForRequestedDay\n  .filter(s => !requestedDatetime || !requestedWallClockMatches(s))\n  .map(s => toPublicSlot(s))\n  .slice(0, 10);\nconst needsScheduleFallback = slots.length === 0;\nreturn [{ json: {\n  success: true,\n  matched,\n  exact_slot: exactSlot,\n  nearest_slots: nearestSlots,\n  available_slots_today: availableSlotsToday,\n  all_slots_count: slots.length,\n  needs_schedule_fallback: needsScheduleFallback,\n  error_code: errorCode,\n  message,\n  ...common,\n  authority: 'supabase.rpc_get_available_slots',\n  verification_status: errorCode === 'RPC_ERROR' ? 'authority_error' : (matched === true || availableSlotsToday.length > 0 ? 'verified_available' : 'verified_unavailable')\n} }];"
+   },
+   "id": "e8efd939-46fa-47ea-93a5-7a9980d7cf39",
+   "name": "Match & Analyze Slots (Deterministic)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -448,
+    96
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $json.needs_schedule_fallback }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "equals"
+       },
+       "rightValue": true
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "fcef0766-6316-4ec9-9d26-436254a83eb1",
+   "name": "Needs Schedule Fallback?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    -224,
+    96
+   ]
+  },
+  {
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT day_of_week, start_time, end_time\nFROM doctor_schedule_rules\nWHERE clinic_id = $1::uuid\n  AND doctor_id = $2::uuid\n  AND day_of_week = EXTRACT(DOW FROM $3::date)\n  AND rule_type = 'weekly'\n  AND is_available = true\n  AND deleted_at IS NULL\nORDER BY start_time ASC;",
+    "options": {
+     "queryReplacement": "={{ [String($(\"Prepare Search Window\").item.json.clinic_id || \"\"), String($(\"Prepare Search Window\").item.json.doctor_id || \"\"), String($(\"Prepare Search Window\").item.json.requested_date || \"\")] }}"
+    }
+   },
+   "id": "2229115f-a42d-4950-9dbf-c91ff97f8196",
+   "name": "Check Doctor Weekly Schedule (Fallback)",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    0,
+    0
+   ],
+   "onError": "stopWorkflow",
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "alwaysOutputData": true,
+   "credentials": {
+    "postgres": {
+     "id": "BaztpCLb3igivhUi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "const match = $('Match & Analyze Slots (Deterministic)').item.json;\nlet scheduleRows = null;\nconst fallbackExpected = match.needs_schedule_fallback === true;\ntry {\n  scheduleRows = $('Check Doctor Weekly Schedule (Fallback)').all().map(i => i.json || {}).filter(row => row && row.day_of_week !== undefined && row.start_time !== undefined && row.end_time !== undefined);\n} catch (e) { scheduleRows = null; }\nconst nearbySearch = match.nearby_search === true || String(match.search_mode || '').toLowerCase() === 'nearby_alternatives';\nlet doctorWorksThatDay = null;\nlet workingHours = null;\nlet errorCode = match.error_code ?? null;\nlet message = match.message ?? null;\nlet verificationStatus = match.verification_status || (match.success === true ? 'verified_unavailable' : 'authority_error');\nconst authority = match.authority || 'supabase.rpc_get_available_slots';\nif (fallbackExpected && scheduleRows !== null) {\n  if (nearbySearch) {\n    // An empty RPC result over a nearby window does not prove that the doctor is off\n    // on the anchor day and must not collapse the entire search into that wording.\n    doctorWorksThatDay = scheduleRows.length > 0;\n    workingHours = scheduleRows.map(r => ({ start_time: r.start_time, end_time: r.end_time }));\n    errorCode = 'NO_AVAILABLE_SLOTS_IN_WINDOW';\n    message = 'لا توجد مواعيد متاحة مؤكدة في الأيام القريبة التي تم البحث فيها';\n  } else if (scheduleRows.length === 0) {\n    doctorWorksThatDay = false;\n    workingHours = [];\n    errorCode = 'DOCTOR_NOT_WORKING_THAT_DAY';\n    message = 'الدكتور ما يشتغلش في اليوم ده جرب يوم تاني';\n  } else {\n    doctorWorksThatDay = true;\n    workingHours = scheduleRows.map(r => ({ start_time: r.start_time, end_time: r.end_time }));\n    errorCode = 'NO_AVAILABLE_SLOTS';\n    message = 'الدكتور يعمل في هذا اليوم، لكن لا توجد مواعيد متاحة مؤكدة حاليًا';\n  }\n}\nreturn [{ json: {\n  success: match.success,\n  matched: match.matched,\n  exact_slot: match.exact_slot,\n  nearest_slots: match.nearest_slots,\n  available_slots_today: match.available_slots_today,\n  doctor_works_that_day: doctorWorksThatDay,\n  working_hours: workingHours,\n  error_code: errorCode,\n  message,\n  requested_date: match.requested_date,\n  requested_datetime: match.requested_datetime,\n  clinic_id: match.clinic_id || null,\n  doctor_id: match.doctor_id || null,\n  service_id: match.service_id || null,\n  search_mode: match.search_mode || 'requested_window',\n  nearby_search: nearbySearch,\n  search_window_start: match.search_window_start || null,\n  search_window_end: match.search_window_end || null,\n  authority,\n  verification_status: verificationStatus,\n  timezone: match.timezone || null,\n  exact_slot: match.exact_slot || null,\n  slot_status: match.exact_slot?.slot_status || null\n} }];"
+   },
+   "id": "2c60ac3f-a90f-4811-92eb-2cbb9458bc2f",
+   "name": "Build Final Response (Deterministic)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    176
+   ]
+  },
+  {
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT\n  $1 AS clinic_id,\n  COALESCE(r.doctor_id, NULLIF($2, '')) AS doctor_id,\n  $3 AS service_id,\n  NULLIF($4, '') AS requested_date,\n  NULLIF($5, '') AS requested_time,\n  NULLIF($6, '') AS search_range_days,\n  NULLIF($7, '') AS now_iso,\n  NULLIF($8, '') AS timezone,\n  NULLIF($9, '') AS timezone_source,\n  NULLIF($10, '') AS utc_offset,\n  NULLIF($11, '') AS message_fingerprint,\n  NULLIF($12, '') AS message_id,\n  NULLIF($13, '') AS request_key,\n  NULLIF($14, '') AS source_event_id,\n  NULLIF($15, '') AS turn_id,\n  NULLIF($16, '') AS turn_key,\n  NULLIF(c.timezone, '') AS clinic_timezone\nFROM clinics c\nLEFT JOIN LATERAL (\n  SELECT d.id::text AS doctor_id\n  FROM doctors d\n  WHERE d.clinic_id = $1::uuid\n    AND d.is_active = true AND d.deleted_at IS NULL\n    AND NULLIF($2, '') IS NOT NULL\n    AND $2 !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'\n    AND REGEXP_REPLACE(\n          REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(d.name, '[أإآٱ]', 'ا', 'g'), 'ى', 'ي', 'g'), 'ة', 'ه', 'g'),\n          '^\\s*(الدكتورة|الدكتور|دكتورة|دكتور|د\\.)\\s*', '')\n      ILIKE '%' || REGEXP_REPLACE(\n          REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE($2, '[أإآٱ]', 'ا', 'g'), 'ى', 'ي', 'g'), 'ة', 'ه', 'g'),\n          '^\\s*(الدكتورة|الدكتور|دكتورة|دكتور|د\\.)\\s*', '') || '%'\n  ORDER BY d.name\n  LIMIT 1\n) r ON true\nWHERE c.id = $1::uuid\nLIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [String($json.clinic_id || \"\"), String($json.doctor_id || \"\"), String($json.service_id || \"\"), String($json.requested_date || \"\"), String($json.requested_time || \"\"), String($json.search_range_days || \"\"), String($json.now_iso || \"\"), String($json.timezone || \"\"), String($json.timezone_source || \"\"), String($json.utc_offset || \"\"), String($json.message_fingerprint || \"\"), String($json.message_id || \"\"), String($json.request_key || \"\"), String($json.source_event_id || \"\"), String($json.turn_id || \"\"), String($json.turn_key || \"\")] }}"
+    }
+   },
+   "id": "71728fd1-8ce7-48d2-afbf-23ef1bdfbead",
+   "name": "Resolve Clinic Timezone",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    -240,
+    0
+   ],
+   "onError": "stopWorkflow",
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "credentials": {
+    "postgres": {
+     "id": "BaztpCLb3igivhUi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "a4a0be33-61b7-4c31-8ad6-769566989211",
+   "name": "Build Presented Offer (Deterministic)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    496,
+    640
+   ],
+   "parameters": {
+    "jsCode": "// P-OFFER (2026-09-05): persist the verified offer into conversation_state so the\n// acceptance flow can bind the patient's choice on the next turn. The agent-tool\n// path has no deterministic envelope on the main line, so without this write the\n// offered slots were lost and acceptance turns degraded to 'unclear'.\nconst resp = $json || {};\nconst trigger = (() => { try { return $('Get Available Slots Input').first().json || {}; } catch (_) { return {}; } })();\nconst buildLocal = (iso, tz) => {\n  const s = String(iso || '');\n  let date = s.slice(0, 10), time = s.slice(11, 16);\n  if (tz && s) {\n    try {\n      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(s));\n      const v = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));\n      date = v.year + '-' + v.month + '-' + v.day;\n      time = v.hour + ':' + v.minute;\n    } catch (_) { /* keep UTC slice */ }\n  }\n  return { date, time };\n};\nconst tz = String(resp.timezone || '').trim() || null;\nconst exact = resp.exact_slot && typeof resp.exact_slot === 'object' ? resp.exact_slot : null;\nconst todaySlots = Array.isArray(resp.available_slots_today) ? resp.available_slots_today : [];\nconst nearSlots = Array.isArray(resp.nearest_slots) ? resp.nearest_slots : [];\nconst raw = [];\nif (exact && exact.slot_id) raw.push(exact);\nfor (const s of todaySlots.concat(nearSlots)) {\n  if (raw.length >= 4) break;\n  if (s && s.slot_id && !raw.some((x) => x.slot_id === s.slot_id)) raw.push(s);\n}\nlet offer = null;\nif (resp.verification_status === 'verified_available' && raw.length) {\n  const nowMs = Date.now();\n  offer = {\n    schema_version: 2,\n    kind: 'presented_offer',\n    offered_at: new Date(nowMs).toISOString(),\n    expires_at: new Date(nowMs + 600000).toISOString(),\n    clinic_id: resp.clinic_id || null,\n    patient_id: trigger.patient_id || null,\n    conversation_id: trigger.conversation_id || null,\n    doctor_id: resp.doctor_id || null,\n    doctor_name: null,\n    service_id: resp.service_id || null,\n    appointment_type: null,\n    alternatives: raw.slice(0, 4).map((s, i) => {\n      const local = buildLocal(s.start_time, tz);\n      return {\n        rank: i + 1,\n        slot_id: s.slot_id || null,\n        start_time: s.start_time || null,\n        local_date: local.date,\n        local_time: local.time,\n        label: null,\n        doctor_id: s.doctor_id || resp.doctor_id || null,\n        service_id: s.service_id || resp.service_id || null,\n        clinic_id: s.clinic_id || resp.clinic_id || null,\n        slot_status: 'available'\n      };\n    })\n  };\n}\nreturn [{ json: { ...resp, presented_offer_write: offer } }];"
+   }
+  },
+  {
+   "id": "0ca577cb-8283-4748-ba1d-6652bc9b2215",
+   "name": "Persist Presented Offer (Deterministic)",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    704,
+    640
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH in_row AS (\n  SELECT\n    CASE WHEN $1::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN $1::uuid ELSE NULL END AS conversation_id,\n    CASE WHEN $3::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN $3::uuid ELSE NULL END AS clinic_id,\n    NULLIF($4::text, '') AS patient_id,\n    $2::jsonb AS offer\n),\nupd AS (\n  UPDATE conversation_state cs\n  SET state_data = jsonb_set(jsonb_set(cs.state_data, '{presented_offer}', in_row.offer, true), '{pending_offer}', in_row.offer, true)\n  FROM in_row\n  WHERE in_row.conversation_id IS NOT NULL\n    AND in_row.clinic_id IS NOT NULL\n    AND cs.conversation_id = in_row.conversation_id\n    AND EXISTS (\n      SELECT 1 FROM conversations c\n      WHERE c.id = cs.conversation_id\n        AND c.clinic_id = in_row.clinic_id\n        AND (in_row.patient_id IS NULL OR c.patient_id::text = in_row.patient_id)\n        AND c.deleted_at IS NULL\n    )\n  RETURNING cs.conversation_id\n)\nSELECT (SELECT count(*) FROM upd)::int AS offer_persisted, in_row.offer AS presented_offer_write FROM in_row;",
+    "options": {
+     "queryReplacement": "={{ [ String($('Get Available Slots Input').first().json.conversation_id || \"\"), JSON.stringify($json.presented_offer_write ?? null), String($json.clinic_id || \"\"), String($('Get Available Slots Input').first().json.patient_id || \"\") ] }}"
+    }
+   },
+   "onError": "continueRegularOutput",
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "credentials": {
+    "postgres": {
+     "id": "BaztpCLb3igivhUi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "fe1ec24d-ddd7-4ffe-9046-d6b9f20fb970",
+   "name": "Return Availability Result (Deterministic)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    912,
+    640
+   ],
+   "parameters": {
+    "jsCode": "// P-RETURN (2026-09-05): terminal node of the availability child. The persist\n// branch runs BEFORE this node (side effect), but the sub-workflow contract for\n// both callers (agent tool + deterministic path) is the Build Final Response\n// object. Pass it through unchanged so callers never see persistence internals.\nconst result = (() => { try { return $('Build Final Response (Deterministic)').first().json || {}; } catch (_) { return {}; } })();\nreturn [{ json: result }];"
+   }
+  },
+  {
+   "id": "1483af06-edc8-41d6-a4cd-d60e7c3ee283",
+   "name": "Slot Input Valid?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    -780,
+    96
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "slot-input-valid-20260906",
+       "leftValue": "={{ $json.input_error }}",
+       "operator": {
+        "operation": "notEmpty",
+        "singleValue": true,
+        "type": "string"
+       }
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     }
+    }
+   }
+  }
+ ],
+ "nodeGroups": [],
+ "activeVersion": {
+  "sameAsDraft": true
+ },
+ "meta": {
+  "aiBuilderAssisted": true,
+  "builderVariant": "mcp"
+ }
+}

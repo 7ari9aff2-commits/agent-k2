@@ -1,0 +1,26 @@
+{
+ "name": "Slot Input Valid?",
+ "type": "n8n-nodes-base.if",
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "slot-input-valid-20260906",
+     "leftValue": "={{ $json.input_error }}",
+     "operator": {
+      "operation": "notEmpty",
+      "singleValue": true,
+      "type": "string"
+     }
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 1
+   }
+  }
+ }
+}

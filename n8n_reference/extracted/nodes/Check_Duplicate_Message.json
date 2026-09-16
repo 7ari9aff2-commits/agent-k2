@@ -1,0 +1,30 @@
+{
+ "name": "Check Duplicate Message",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "d1e2f3a4-b5c6-47d8-9e0f-123456789001",
+     "leftValue": "={{ $json.duplicate }}",
+     "operator": {
+      "operation": "true",
+      "singleValue": true,
+      "type": "boolean"
+     },
+     "rightValue": ""
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

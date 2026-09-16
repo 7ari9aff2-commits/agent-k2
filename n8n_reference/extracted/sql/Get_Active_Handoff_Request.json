@@ -1,0 +1,7 @@
+{
+ "name": "Get Active Handoff Request",
+ "operation": "executeQuery",
+ "query": "WITH active AS (\n  SELECT id, status::text AS status, handoff_reason, priority::text AS priority, requested_at\n  FROM public.handoff_requests\n  WHERE conversation_id = $1::uuid\n    AND clinic_id = $2::uuid\n    AND patient_id = $3::uuid\n    AND status IN ('REQUESTED', 'OPEN', 'ASSIGNED', 'IN_PROGRESS')\n  ORDER BY updated_at DESC\n  LIMIT 1\n)\nSELECT\n  (SELECT id FROM active) AS handoff_request_id,\n  (SELECT status FROM active) AS handoff_status,\n  (SELECT handoff_reason FROM active) AS handoff_reason,\n  (SELECT priority FROM active) AS handoff_priority,\n  (SELECT requested_at FROM active) AS handoff_requested_at;",
+ "queryReplacement": "={{ [$(\"Normalize & Validate\").first().json.conversation_id, $(\"Normalize & Validate\").first().json.clinic_id, $(\"Normalize & Validate\").first().json.patient_id] }}",
+ "notes": ""
+}

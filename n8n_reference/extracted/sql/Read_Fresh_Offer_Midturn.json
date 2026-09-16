@@ -1,0 +1,7 @@
+{
+ "name": "Read Fresh Offer (Midturn)",
+ "operation": "executeQuery",
+ "query": "SELECT cs.state_data->'presented_offer' AS presented_offer,\n       COALESCE(cs.state_data->'presented_offer'->'alternatives', '[]'::jsonb) AS availability_alternatives\nFROM conversation_state cs\nJOIN conversations c ON c.id = cs.conversation_id AND c.clinic_id = $2::uuid AND c.patient_id = $3::uuid AND c.deleted_at IS NULL\nWHERE cs.conversation_id = $1::uuid\nLIMIT 1;",
+ "queryReplacement": "={{ [$(\"Normalize & Validate\").first().json.conversation_id, $(\"Normalize & Validate\").first().json.clinic_id, $(\"Normalize & Validate\").first().json.patient_id ] }}",
+ "notes": ""
+}

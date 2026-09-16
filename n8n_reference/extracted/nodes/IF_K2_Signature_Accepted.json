@@ -1,0 +1,29 @@
+{
+ "name": "IF K2 Signature Accepted",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   },
+   "conditions": [
+    {
+     "id": "7cac6ccb-5601-4bbb-b818-093667d8a892",
+     "leftValue": "={{ $json.accepted }}",
+     "rightValue": true,
+     "operator": {
+      "type": "boolean",
+      "operation": "true"
+     }
+    }
+   ],
+   "combinator": "and"
+  },
+  "options": {}
+ },
+ "credentials": []
+}

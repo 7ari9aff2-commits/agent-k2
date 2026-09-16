@@ -1,0 +1,11 @@
+{
+ "name": "Resolve Clinic Timezone",
+ "type": "n8n-nodes-base.postgres",
+ "parameters": {
+  "operation": "executeQuery",
+  "query": "SELECT\n  $1 AS clinic_id,\n  COALESCE(r.doctor_id, NULLIF($2, '')) AS doctor_id,\n  $3 AS service_id,\n  NULLIF($4, '') AS requested_date,\n  NULLIF($5, '') AS requested_time,\n  NULLIF($6, '') AS search_range_days,\n  NULLIF($7, '') AS now_iso,\n  NULLIF($8, '') AS timezone,\n  NULLIF($9, '') AS timezone_source,\n  NULLIF($10, '') AS utc_offset,\n  NULLIF($11, '') AS message_fingerprint,\n  NULLIF($12, '') AS message_id,\n  NULLIF($13, '') AS request_key,\n  NULLIF($14, '') AS source_event_id,\n  NULLIF($15, '') AS turn_id,\n  NULLIF($16, '') AS turn_key,\n  NULLIF(c.timezone, '') AS clinic_timezone\nFROM clinics c\nLEFT JOIN LATERAL (\n  SELECT d.id::text AS doctor_id\n  FROM doctors d\n  WHERE d.clinic_id = $1::uuid\n    AND d.is_active = true AND d.deleted_at IS NULL\n    AND NULLIF($2, '') IS NOT NULL\n    AND $2 !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'\n    AND REGEXP_REPLACE(\n          REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(d.name, '[أإآٱ]', 'ا', 'g'), 'ى', 'ي', 'g'), 'ة', 'ه', 'g'),\n          '^\\s*(الدكتورة|الدكتور|دكتورة|دكتور|د\\.)\\s*', '')\n      ILIKE '%' || REGEXP_REPLACE(\n          REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE($2, '[أإآٱ]', 'ا', 'g'), 'ى', 'ي', 'g'), 'ة', 'ه', 'g'),\n          '^\\s*(الدكتورة|الدكتور|دكتورة|دكتور|د\\.)\\s*', '') || '%'\n  ORDER BY d.name\n  LIMIT 1\n) r ON true\nWHERE c.id = $1::uuid\nLIMIT 1;",
+  "options": {
+   "queryReplacement": "={{ [String($json.clinic_id || \"\"), String($json.doctor_id || \"\"), String($json.service_id || \"\"), String($json.requested_date || \"\"), String($json.requested_time || \"\"), String($json.search_range_days || \"\"), String($json.now_iso || \"\"), String($json.timezone || \"\"), String($json.timezone_source || \"\"), String($json.utc_offset || \"\"), String($json.message_fingerprint || \"\"), String($json.message_id || \"\"), String($json.request_key || \"\"), String($json.source_event_id || \"\"), String($json.turn_id || \"\"), String($json.turn_key || \"\")] }}"
+  }
+ }
+}

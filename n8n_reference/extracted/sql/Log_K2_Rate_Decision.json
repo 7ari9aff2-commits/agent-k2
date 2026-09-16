@@ -1,0 +1,7 @@
+{
+ "name": "Log K2 Rate Decision",
+ "operation": "executeQuery",
+ "query": "SELECT public.k2_log_operational_event(\n  p_event_type := 'rate_gate',\n  p_clinic_id := $1::uuid,\n  p_patient_id := $2::uuid,\n  p_conversation_id := $3::uuid,\n  p_status := CASE WHEN $4::boolean THEN 'allowed' ELSE 'deferred' END,\n  p_decision := CASE WHEN $5::boolean THEN 'priority_allow' ELSE CASE WHEN $4::boolean THEN 'allow' ELSE 'defer' END END,\n  p_metadata := jsonb_build_object('recent_conversation_count', $6::integer, 'recent_clinic_count', $7::integer, 'conversation_limit', $8::integer, 'clinic_limit', $9::integer, 'window_seconds', $10::integer)\n);",
+ "queryReplacement": "={{ [$(\"Normalize & Validate\").first().json.clinic_id, $(\"Normalize & Validate\").first().json.patient_id, $(\"Normalize & Validate\").first().json.conversation_id, $(\"K2 Inbound Burst Rate Gate\").first().json.allowed === true, $(\"K2 Inbound Burst Rate Gate\").first().json.priority_allow === true, $(\"K2 Inbound Burst Rate Gate\").first().json.recent_conversation_count || 0, $(\"K2 Inbound Burst Rate Gate\").first().json.recent_clinic_count || 0, $(\"K2 Inbound Burst Rate Gate\").first().json.conversation_limit || 8, $(\"K2 Inbound Burst Rate Gate\").first().json.clinic_limit || 300, $(\"K2 Inbound Burst Rate Gate\").first().json.window_seconds || 15] }}",
+ "notes": "Operational telemetry only. Stores decision/counts and scoped identifiers; no message content and no token quota."
+}

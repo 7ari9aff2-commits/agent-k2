@@ -1,0 +1,21 @@
+{
+ "name": "DeepSeek Repair Model",
+ "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+ "typeVersion": 1.2,
+ "parameters": {
+  "model": {
+   "__rl": true,
+   "value": "deepseek/deepseek-v4-flash-0731",
+   "mode": "list",
+   "cachedResultName": "deepseek/deepseek-v4-flash-0731"
+  },
+  "options": {
+   "maxTokens": 800,
+   "temperature": 0,
+   "extraBody": "{\"reasoning\":{\"enabled\":false,\"max_tokens\":512}}"
+  }
+ },
+ "credentials": [
+  "openAiApi"
+ ]
+}

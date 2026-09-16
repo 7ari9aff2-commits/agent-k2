@@ -1,0 +1,23 @@
+{
+ "name": "DeepSeek Model",
+ "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+ "typeVersion": 1.2,
+ "parameters": {
+  "model": {
+   "__rl": true,
+   "value": "deepseek/deepseek-v4-flash-0731",
+   "mode": "list",
+   "cachedResultName": "deepseek/deepseek-v4-flash-0731",
+   "cachedResultUrl": ""
+  },
+  "options": {
+   "maxTokens": 4000,
+   "responseFormat": "json_object",
+   "temperature": 0.3,
+   "extraBody": "{\"reasoning\":{\"enabled\":false,\"max_tokens\":2048}}"
+  }
+ },
+ "credentials": [
+  "openAiApi"
+ ]
+}

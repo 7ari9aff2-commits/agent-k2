@@ -1,0 +1,1150 @@
+{
+ "Webhook - Incoming Message": {
+  "main": [
+   [
+    {
+     "node": "Normalize & Validate",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Normalize & Validate": {
+  "main": [
+   [
+    {
+     "node": "Extract K2 Signature Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Save Conversation State": {
+  "main": [
+   [
+    {
+     "node": "Stale Save? (v18)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Log Outgoing Message": {
+  "main": [
+   [
+    {
+     "node": "Respond To Patient",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Audit Entry": {
+  "main": [
+   [
+    {
+     "node": "Log Agent Audit Entry",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Log Incoming Message": {
+  "main": [
+   [
+    {
+     "node": "IF Early Security Reject",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Check Duplicate Message": {
+  "main": [
+   [
+    {
+     "node": "Respond Duplicate Message",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Get Clinic Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Get Clinic Context": {
+  "main": [
+   [
+    {
+     "node": "Validate Patient Ownership",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Check Patient Ownership": {
+  "main": [
+   [
+    {
+     "node": "K2 Inbound Burst Rate Gate",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Respond Unauthorized Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Approved Create Action": {
+  "main": [
+   [
+    {
+     "node": "Prepare Execute Input",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "IF Approved Cancel Action",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Approved Cancel Action": {
+  "main": [
+   [
+    {
+     "node": "Execute Approved Cancel Appointment",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "IF Approved Reschedule Action",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Approved Reschedule Action": {
+  "main": [
+   [
+    {
+     "node": "Execute Approved Reschedule Appointment",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Get Conversation State": {
+  "main": [
+   [
+    {
+     "node": "Get Recent Window 2h",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Evaluate Completed Create Replay": {
+  "main": [
+   [
+    {
+     "node": "Completed Create Replay?",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Completed Create Replay?": {
+  "main": [
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Resolve Branch Inquiry (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Resolve Booking IDs (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Apply Resolved Booking IDs (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Resolve Doctor Inquiry (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Resolve Service Fact (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Resolve Service Fact (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Build Clinic Persona Context (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Derive Actions (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "IF Handoff Required",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Handoff Required": {
+  "main": [
+   [
+    {
+     "node": "Prepare Handoff Input",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Build Persistent Conversation State",
+     "type": "main",
+     "index": 0
+    },
+    {
+     "node": "Read Fresh Offer (Midturn)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Handoff Input": {
+  "main": [
+   [
+    {
+     "node": "Execute Handoff Child",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Execute Handoff Child": {
+  "main": [
+   [
+    {
+     "node": "Restore Handoff Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Restore Handoff Context": {
+  "main": [
+   [
+    {
+     "node": "Build Persistent Conversation State",
+     "type": "main",
+     "index": 0
+    },
+    {
+     "node": "Read Fresh Offer (Midturn)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Execution Transition Guard (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Lookup Business Time Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Lookup Business Time Context": {
+  "main": [
+   [
+    {
+     "node": "Business Time Gate (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Business Time Gate (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "IF Business Time Allowed",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Business Time Allowed": {
+  "main": [
+   [
+    {
+     "node": "Prepare Operation Claim Input",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Operation Claim Input": {
+  "main": [
+   [
+    {
+     "node": "IF Operation Claim Required",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Operation Claim Required": {
+  "main": [
+   [
+    {
+     "node": "Claim Operation (Atomic)",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "IF Approved Create Action",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Claim Operation (Atomic)": {
+  "main": [
+   [
+    {
+     "node": "Apply Operation Claim (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Apply Operation Claim (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "IF Claim Allows Child",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Claim Allows Child": {
+  "main": [
+   [
+    {
+     "node": "IF Approved Create Action",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Validate Child Envelope": {
+  "main": [
+   [
+    {
+     "node": "Prepare Operation Finalize Input",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Operation Finalize Input": {
+  "main": [
+   [
+    {
+     "node": "Finalize Operation (Atomic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Finalize Operation (Atomic)": {
+  "main": [
+   [
+    {
+     "node": "Merge Operation Completion",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Merge Operation Completion": {
+  "main": [
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Persistent Conversation State": {
+  "main": [
+   [
+    {
+     "node": "Build Save State RPC Body",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Save State RPC Body": {
+  "main": [
+   [
+    {
+     "node": "Save Conversation State",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Stale Save? (v18)": {
+  "main": [
+   [
+    {
+     "node": "Get Conversation State (retry) (v18)",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Build Outgoing Message SQL Parameters",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Get Conversation State (retry) (v18)": {
+  "main": [
+   [
+    {
+     "node": "Build Retry RPC Body (v18)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Retry RPC Body (v18)": {
+  "main": [
+   [
+    {
+     "node": "Save Conversation State (retry) (v18)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Execute Input": {
+  "main": [
+   [
+    {
+     "node": "Prepare Execute Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Execute Context": {
+  "main": [
+   [
+    {
+     "node": "Execute Approved Create Appointment",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "DeepSeek Model": {
+  "ai_languageModel": [
+   [
+    {
+     "node": "Booking Assistant Agent",
+     "type": "ai_languageModel",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Execute Approved Create Appointment": {
+  "main": [
+   [
+    {
+     "node": "Validate Child Envelope",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Execute Approved Cancel Appointment": {
+  "main": [
+   [
+    {
+     "node": "Validate Child Envelope",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Execute Approved Reschedule Appointment": {
+  "main": [
+   [
+    {
+     "node": "Validate Child Envelope",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Single Agent Result Phase": {
+  "main": [
+   [
+    {
+     "node": "Extract Single Agent Reply",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Normalize Agent Output (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Extract Single Agent Reply": {
+  "main": [
+   [
+    {
+     "node": "Derive Actions (Deterministic)",
+     "type": "main",
+     "index": 0
+    },
+    {
+     "node": "Build Audit Entry",
+     "type": "main",
+     "index": 0
+    },
+    {
+     "node": "Compute AI Request Usage (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Get Active Handoff Request": {
+  "main": [
+   [
+    {
+     "node": "IF Handoff Active",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Handoff Active": {
+  "main": [
+   [
+    {
+     "node": "Respond Handoff Suppressed",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Evaluate Completed Create Replay",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Handle Normalize Error (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "IF Normalize Error",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Normalize Error": {
+  "main": [
+   [
+    {
+     "node": "Respond Invalid Inbound Payload",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Verify K2 Inbound Signature",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Save Conversation State (retry) (v18)": {
+  "main": [
+   [
+    {
+     "node": "Build Outgoing Message SQL Parameters",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Outgoing Message SQL Parameters": {
+  "main": [
+   [
+    {
+     "node": "Log Outgoing Message",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Get Recent Window 2h": {
+  "main": [
+   [
+    {
+     "node": "Get Active Handoff Request",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Response Policy (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Persist Pending Confirmation (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Compute AI Request Usage (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Insert AI Request Usage",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Resolve Branch Inquiry (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Resolve Doctor Inquiry (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Early Security Reject": {
+  "main": [
+   [
+    {
+     "node": "Respond Unauthorized Context",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Check Duplicate Message",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "K2 Inbound Burst Rate Gate": {
+  "main": [
+   [
+    {
+     "node": "IF K2 Burst Allowed",
+     "type": "main",
+     "index": 0
+    },
+    {
+     "node": "Log K2 Rate Decision",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF K2 Burst Allowed": {
+  "main": [
+   [
+    {
+     "node": "Get Conversation State",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Mark K2 Burst Message Deferred",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Mark K2 Burst Message Deferred": {
+  "main": [
+   [
+    {
+     "node": "Respond K2 Burst Protected",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Extract K2 Signature Context": {
+  "main": [
+   [
+    {
+     "node": "Handle Normalize Error (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Verify K2 Inbound Signature": {
+  "main": [
+   [
+    {
+     "node": "IF K2 Signature Accepted",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF K2 Signature Accepted": {
+  "main": [
+   [
+    {
+     "node": "Log Incoming Message",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Respond Unauthorized Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prefetch Clinic FAQ": {
+  "main": [
+   [
+    {
+     "node": "Booking Assistant Agent",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Booking Assistant Agent": {
+  "main": [
+   [
+    {
+     "node": "R3 LLM Response Safety",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "R3 LLM Response Safety": {
+  "main": [
+   [
+    {
+     "node": "R2 LLM Error Detection",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "R2 LLM Error Detection": {
+  "main": [
+   [
+    {
+     "node": "R1 Agent Reply Recovery",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Route Single Agent Phase": {
+  "main": [
+   [
+    {
+     "node": "IF Single Agent Result Phase",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Validate Patient Ownership": {
+  "main": [
+   [
+    {
+     "node": "Check Patient Ownership",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Normalize Agent Output (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "IF Contract Needs Repair",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Contract Needs Repair": {
+  "main": [
+   [
+    {
+     "node": "Build Repair Prompt (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Resolve Booking IDs (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Repair Prompt (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "DeepSeek Repair Chain",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "DeepSeek Repair Model": {
+  "ai_languageModel": [
+   [
+    {
+     "node": "DeepSeek Repair Chain",
+     "type": "ai_languageModel",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "DeepSeek Repair Chain": {
+  "main": [
+   [
+    {
+     "node": "Validate Repaired Contract (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Validate Repaired Contract (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Resolve Booking IDs (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Apply Resolved Booking IDs (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "P1.7 Patient Field Normalization",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Build Clinic Persona Context (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Prefetch Clinic FAQ",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Check Doctor Availability": {
+  "ai_tool": [
+   [
+    {
+     "node": "Booking Assistant Agent",
+     "type": "ai_tool",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "System Orchestrator (Policy)": {
+  "main": [
+   [
+    {
+     "node": "IF Non-Scheduling Turn (v19)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "IF Non-Scheduling Turn (v19)": {
+  "main": [
+   [
+    {
+     "node": "Response Policy (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ],
+   [
+    {
+     "node": "Execution Transition Guard (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "P1.7 Patient Field Normalization": {
+  "main": [
+   [
+    {
+     "node": "System Orchestrator (Policy)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Read Fresh Offer (Midturn)": {
+  "main": [
+   [
+    {
+     "node": "Build Persistent Conversation State",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "R1 Agent Reply Recovery": {
+  "main": [
+   [
+    {
+     "node": "K2 Contract Adapter (v4 to v3)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "K2 Contract Adapter (v4 to v3)": {
+  "main": [
+   [
+    {
+     "node": "Route Single Agent Phase",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Persist Pending Confirmation (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Reply Guard (Deterministic)",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Reply Guard (Deterministic)": {
+  "main": [
+   [
+    {
+     "node": "Prepare Single Agent Result Context",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ },
+ "Prepare Single Agent Result Context": {
+  "main": [
+   [
+    {
+     "node": "Extract Single Agent Reply",
+     "type": "main",
+     "index": 0
+    }
+   ]
+  ]
+ }
+}

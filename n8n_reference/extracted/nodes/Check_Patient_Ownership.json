@@ -1,0 +1,30 @@
+{
+ "name": "Check Patient Ownership",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "e2f3a4b5-c6d7-48e9-0f12-234567890002",
+     "leftValue": "={{ $json.ownership_valid }}",
+     "operator": {
+      "operation": "true",
+      "singleValue": true,
+      "type": "boolean"
+     },
+     "rightValue": ""
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

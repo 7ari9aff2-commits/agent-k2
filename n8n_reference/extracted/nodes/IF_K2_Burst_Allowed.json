@@ -1,0 +1,30 @@
+{
+ "name": "IF K2 Burst Allowed",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "d849cd65-cba0-47da-9266-04c48a2d8339",
+     "leftValue": "={{ $json.allowed === true }}",
+     "operator": {
+      "operation": "true",
+      "singleValue": true,
+      "type": "boolean"
+     },
+     "rightValue": ""
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "loose",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

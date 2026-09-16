@@ -1,0 +1,13 @@
+{
+ "name": "Respond K2 Burst Protected",
+ "type": "n8n-nodes-base.respondToWebhook",
+ "typeVersion": 1.5,
+ "parameters": {
+  "respondWith": "json",
+  "responseBody": "={{ { reply_text: null, suppress_reply: true, response_code: 'QUEUED_DEBOUNCED', rate_limited: true, priority: $(\"K2 Inbound Burst Rate Gate\").first().json.priority_allow === true, batch_id: $json.batch_id || null, batch_message_count: $json.batch_message_count || 1, window_seconds: 15, conversation_id: $(\"Normalize & Validate\").first().json.conversation_id, clinic_id: $(\"Normalize & Validate\").first().json.clinic_id } }}",
+  "options": {
+   "responseCode": 200
+  }
+ },
+ "credentials": []
+}

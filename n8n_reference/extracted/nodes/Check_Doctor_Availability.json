@@ -1,0 +1,74 @@
+{
+ "name": "Check Doctor Availability",
+ "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+ "typeVersion": 2.2,
+ "parameters": {
+  "description": "Check available appointment slots for a doctor on a date in the clinic local calendar. CALL ONLY when the patient explicitly asks about available times/days or states a specific day AND the doctor is known. A plain booking request with no day and no time (e.g. \"عايز احجز عند الدكتور X\", \"ابغى موعد\") is NOT a call trigger: never check availability for it, never use today's date for it — ask which day suits the patient naturally. Never answer with 'I will check' or 'one moment' instead of calling it when a day was asked. If the patient asks for any available time without naming a day (e.g. 'أي وقت متاح', 'احجز لي أي وقت', 'أقرب موعد'), use today's clinic-local date from context.local_time.date - the system searches the nearby days and returns the nearest verified slots. doctor_id = the doctor name exactly as the patient wrote it, or a doctor id you already have. requested_date = ISO YYYY-MM-DD. The subworkflow resolves the doctor name and returns verified slots: present up to 4 (day and time) and ask which one. Never announce unavailability for a day the patient did not name; when the checked day has no slots, present the nearest verified slots the subworkflow returned. On error or zero verified slots, say honestly that nothing verified was found or the check failed - never invent dates, times, or slots, and never mention tools or IDs.",
+  "workflowId": {
+   "__rl": true,
+   "mode": "id",
+   "value": "6467rQRBEA5fWc0l"
+  },
+  "workflowInputs": {
+   "mappingMode": "defineBelow",
+   "value": {
+    "clinic_id": "={{ $('Get Clinic Context').first().json.clinic_id }}",
+    "doctor_id": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('doctor_id', 'Doctor name exactly as the patient wrote it, or a doctor id already known', 'string') }}",
+    "requested_date": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('requested_date', 'ISO YYYY-MM-DD date in the clinic local calendar', 'string') }}",
+    "conversation_id": "={{ $('Normalize & Validate').first().json.conversation_id }}",
+    "patient_id": "={{ $('Normalize & Validate').first().json.patient_id }}"
+   },
+   "matchingColumns": [],
+   "schema": [
+    {
+     "id": "clinic_id",
+     "displayName": "clinic_id",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    },
+    {
+     "id": "doctor_id",
+     "displayName": "doctor_id",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    },
+    {
+     "id": "requested_date",
+     "displayName": "requested_date",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    },
+    {
+     "id": "conversation_id",
+     "displayName": "conversation_id",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    },
+    {
+     "id": "patient_id",
+     "displayName": "patient_id",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    }
+   ],
+   "attemptToConvertTypes": false,
+   "convertFieldsToString": false
+  }
+ },
+ "credentials": []
+}

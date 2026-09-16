@@ -1,0 +1,40 @@
+{
+ "name": "Get Available Slots Input",
+ "type": "n8n-nodes-base.executeWorkflowTrigger",
+ "parameters": {
+  "workflowInputs": {
+   "values": [
+    {
+     "name": "clinic_id"
+    },
+    {
+     "name": "doctor_id"
+    },
+    {
+     "name": "service_id"
+    },
+    {
+     "name": "requested_date"
+    },
+    {
+     "name": "requested_time"
+    },
+    {
+     "name": "search_range_days"
+    },
+    {
+     "name": "timezone"
+    },
+    {
+     "name": "search_mode"
+    },
+    {
+     "name": "conversation_id"
+    },
+    {
+     "name": "patient_id"
+    }
+   ]
+  }
+ }
+}

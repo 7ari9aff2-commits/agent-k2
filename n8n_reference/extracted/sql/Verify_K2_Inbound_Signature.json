@@ -1,0 +1,7 @@
+{
+ "name": "Verify K2 Inbound Signature",
+ "operation": "executeQuery",
+ "query": "SELECT * FROM public.k2_verify_inbound_signature($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::boolean) LIMIT 1;",
+ "queryReplacement": "={{ [$(\"Extract K2 Signature Context\").first().json.clinic_id, $(\"Extract K2 Signature Context\").first().json.channel_id, $(\"Extract K2 Signature Context\").first().json.channel_type, $(\"Extract K2 Signature Context\").first().json.k2_signed_payload, $(\"Extract K2 Signature Context\").first().json.k2_signature, $(\"Extract K2 Signature Context\").first().json.deferred_replay === true] }}",
+ "notes": "Checks channel-to-clinic binding and HMAC signature; accepts legacy only for channels without a configured signing secret."
+}

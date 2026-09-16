@@ -1,0 +1,7 @@
+{
+ "name": "Mark K2 Burst Message Deferred",
+ "operation": "executeQuery",
+ "query": "WITH marked AS (\n  UPDATE public.messages\n  SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('k2_deferred', true, 'k2_deferred_at', now(), 'k2_deferred_status', 'pending')\n  WHERE id = $6::uuid AND clinic_id = $1::uuid AND patient_id = $2::uuid AND conversation_id = $3::uuid\n  RETURNING id\n), enqueued AS (\n  SELECT * FROM public.k2_enqueue_deferred_batch_v2($1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::uuid, $7::text, $8::timestamptz, $9::text, $10::boolean)\n)\nSELECT e.batch_id, e.batch_status, e.batch_message_count, e.batch_due_at,\n       EXISTS (SELECT 1 FROM marked) AS message_marked,\n       $10::boolean AS priority_allow\nFROM enqueued e LIMIT 1;",
+ "queryReplacement": "={{ [$(\"Normalize & Validate\").first().json.clinic_id, $(\"Normalize & Validate\").first().json.patient_id, $(\"Normalize & Validate\").first().json.conversation_id, $(\"Normalize & Validate\").first().json.channel_type, $(\"Normalize & Validate\").first().json.channel_id, $(\"Log Incoming Message\").first().json.id, $(\"Normalize & Validate\").first().json.message_text, $(\"Normalize & Validate\").first().json.received_at, $(\"Normalize & Validate\").first().json.source_event_id, $(\"K2 Inbound Burst Rate Gate\").first().json.priority_allow === true] }}",
+ "notes": "Marks the already-persisted inbound row and atomically appends it to a short deferred batch. No inbound message is discarded."
+}

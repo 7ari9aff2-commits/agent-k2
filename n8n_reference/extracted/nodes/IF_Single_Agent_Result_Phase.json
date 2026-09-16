@@ -1,0 +1,29 @@
+{
+ "name": "IF Single Agent Result Phase",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "single-agent-result-phase",
+     "leftValue": "={{ $json.agent_phase || $json.single_agent_phase }}",
+     "operator": {
+      "operation": "equals",
+      "type": "string"
+     },
+     "rightValue": "result"
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

@@ -1,0 +1,152 @@
+{
+ "name": "Execute Handoff Child",
+ "type": "n8n-nodes-base.executeWorkflow",
+ "typeVersion": 1.2,
+ "parameters": {
+  "workflowId": {
+   "__rl": true,
+   "mode": "id",
+   "value": "SfzXYzvQ2cvNH1v9"
+  },
+  "workflowInputs": {
+   "mappingMode": "defineBelow",
+   "matchingColumns": [],
+   "schema": [
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "clinic_id",
+     "id": "clinic_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "conversation_id",
+     "id": "conversation_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "patient_id",
+     "id": "patient_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "channel_type",
+     "id": "channel_type",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "channel_id",
+     "id": "channel_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "handoff_reason",
+     "id": "handoff_reason",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "reason_code",
+     "id": "reason_code",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "reason_note",
+     "id": "reason_note",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "correlation_id",
+     "id": "correlation_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "source_message_id",
+     "id": "source_message_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "priority",
+     "id": "priority",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "context_snapshot",
+     "id": "context_snapshot",
+     "required": false,
+     "type": "object"
+    },
+    {
+     "canBeUsedToMatch": true,
+     "defaultMatch": false,
+     "display": true,
+     "displayName": "metadata",
+     "id": "metadata",
+     "required": false,
+     "type": "object"
+    }
+   ],
+   "value": {
+    "channel_id": "={{ $json.handoff_input.channel_id }}",
+    "channel_type": "={{ $json.handoff_input.channel_type }}",
+    "clinic_id": "={{ $json.handoff_input.clinic_id }}",
+    "context_snapshot": "={{ $json.handoff_input.context_snapshot }}",
+    "conversation_id": "={{ $json.handoff_input.conversation_id }}",
+    "correlation_id": "={{ $json.handoff_input.correlation_id }}",
+    "handoff_reason": "={{ $json.handoff_input.handoff_reason }}",
+    "metadata": "={{ $json.handoff_input.metadata }}",
+    "patient_id": "={{ $json.handoff_input.patient_id }}",
+    "priority": "={{ $json.handoff_input.priority }}",
+    "reason_code": "={{ $json.handoff_input.reason_code }}",
+    "reason_note": "={{ $json.handoff_input.reason_note }}",
+    "source_message_id": "={{ $json.handoff_input.source_message_id }}"
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

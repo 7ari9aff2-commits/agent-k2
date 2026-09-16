@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+*.key
+.db_role_password.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Scratch / transient artifacts
+db_sample*.txt
+rls_out.txt
+policies_out.txt
+nv_models.json
+live_wf*.json
+live_wf*.txt
+execs.txt
+exec_*.txt
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db

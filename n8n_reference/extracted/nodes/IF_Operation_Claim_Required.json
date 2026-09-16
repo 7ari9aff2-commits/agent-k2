@@ -1,0 +1,29 @@
+{
+ "name": "IF Operation Claim Required",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "p16-if-claim-required-condition",
+     "leftValue": "={{ $json.claim_required }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": true
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

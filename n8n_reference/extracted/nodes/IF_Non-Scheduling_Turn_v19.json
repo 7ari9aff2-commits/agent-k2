@@ -1,0 +1,29 @@
+{
+ "name": "IF Non-Scheduling Turn (v19)",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "v19-nonsched-skip",
+     "leftValue": "={{ $json.system_decision && $json.system_decision.non_scheduling_turn === true }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": true
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

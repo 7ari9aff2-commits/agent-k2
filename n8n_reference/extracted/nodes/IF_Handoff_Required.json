@@ -1,0 +1,29 @@
+{
+ "name": "IF Handoff Required",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "handoff-required-response-code",
+     "leftValue": "={{ $json.system_decision && $json.system_decision.response_code || '' }}",
+     "operator": {
+      "operation": "equals",
+      "type": "string"
+     },
+     "rightValue": "HANDOFF_REQUIRED"
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

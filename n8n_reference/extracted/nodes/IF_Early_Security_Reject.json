@@ -1,0 +1,30 @@
+{
+ "name": "IF Early Security Reject",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "f7f0ea1f-c27e-47ae-b77b-bb46bac3e22a",
+     "leftValue": "={{ $json.security_reject }}",
+     "operator": {
+      "operation": "true",
+      "singleValue": true,
+      "type": "boolean"
+     },
+     "rightValue": ""
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

@@ -1,0 +1,11 @@
+{
+ "name": "DeepSeek Repair Chain",
+ "type": "@n8n/n8n-nodes-langchain.chainLlm",
+ "typeVersion": 1.9,
+ "parameters": {
+  "promptType": "define",
+  "text": "={{ $json.prompt }}",
+  "batching": {}
+ },
+ "credentials": []
+}

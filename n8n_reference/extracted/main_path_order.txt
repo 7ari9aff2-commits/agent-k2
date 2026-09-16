@@ -1,0 +1,96 @@
+Webhook - Incoming Message
+Normalize & Validate
+Extract K2 Signature Context
+Handle Normalize Error (Deterministic)
+IF Normalize Error
+Respond Invalid Inbound Payload
+Verify K2 Inbound Signature
+IF K2 Signature Accepted
+Log Incoming Message
+Respond Unauthorized Context
+IF Early Security Reject
+Check Duplicate Message
+Respond Duplicate Message
+Get Clinic Context
+Validate Patient Ownership
+Check Patient Ownership
+K2 Inbound Burst Rate Gate
+IF K2 Burst Allowed
+Log K2 Rate Decision
+Get Conversation State
+Mark K2 Burst Message Deferred
+Get Recent Window 2h
+Respond K2 Burst Protected
+Get Active Handoff Request
+IF Handoff Active
+Respond Handoff Suppressed
+Evaluate Completed Create Replay
+Completed Create Replay?
+Response Policy (Deterministic)
+Resolve Branch Inquiry (Deterministic)
+Persist Pending Confirmation (Deterministic)
+Resolve Doctor Inquiry (Deterministic)
+Reply Guard (Deterministic)
+Resolve Service Fact (Deterministic)
+Prepare Single Agent Result Context
+Build Clinic Persona Context (Deterministic)
+Extract Single Agent Reply
+Prefetch Clinic FAQ
+Derive Actions (Deterministic)
+Build Audit Entry
+Compute AI Request Usage (Deterministic)
+Booking Assistant Agent
+IF Handoff Required
+Log Agent Audit Entry
+Insert AI Request Usage
+R3 LLM Response Safety
+Prepare Handoff Input
+Build Persistent Conversation State
+Read Fresh Offer (Midturn)
+R2 LLM Error Detection
+Execute Handoff Child
+Build Save State RPC Body
+R1 Agent Reply Recovery
+Restore Handoff Context
+Save Conversation State
+K2 Contract Adapter (v4 to v3)
+Stale Save? (v18)
+Route Single Agent Phase
+Get Conversation State (retry) (v18)
+Build Outgoing Message SQL Parameters
+IF Single Agent Result Phase
+Build Retry RPC Body (v18)
+Log Outgoing Message
+Normalize Agent Output (Deterministic)
+Save Conversation State (retry) (v18)
+Respond To Patient
+IF Contract Needs Repair
+Build Repair Prompt (Deterministic)
+Resolve Booking IDs (Deterministic)
+DeepSeek Repair Chain
+Apply Resolved Booking IDs (Deterministic)
+Validate Repaired Contract (Deterministic)
+P1.7 Patient Field Normalization
+System Orchestrator (Policy)
+IF Non-Scheduling Turn (v19)
+Execution Transition Guard (Deterministic)
+Lookup Business Time Context
+Business Time Gate (Deterministic)
+IF Business Time Allowed
+Prepare Operation Claim Input
+IF Operation Claim Required
+Claim Operation (Atomic)
+IF Approved Create Action
+Apply Operation Claim (Deterministic)
+Prepare Execute Input
+IF Approved Cancel Action
+IF Claim Allows Child
+Prepare Execute Context
+Execute Approved Cancel Appointment
+IF Approved Reschedule Action
+Execute Approved Create Appointment
+Validate Child Envelope
+Execute Approved Reschedule Appointment
+Prepare Operation Finalize Input
+Finalize Operation (Atomic)
+Merge Operation Completion

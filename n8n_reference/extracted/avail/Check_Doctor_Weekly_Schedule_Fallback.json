@@ -1,0 +1,11 @@
+{
+ "name": "Check Doctor Weekly Schedule (Fallback)",
+ "type": "n8n-nodes-base.postgres",
+ "parameters": {
+  "operation": "executeQuery",
+  "query": "SELECT day_of_week, start_time, end_time\nFROM doctor_schedule_rules\nWHERE clinic_id = $1::uuid\n  AND doctor_id = $2::uuid\n  AND day_of_week = EXTRACT(DOW FROM $3::date)\n  AND rule_type = 'weekly'\n  AND is_available = true\n  AND deleted_at IS NULL\nORDER BY start_time ASC;",
+  "options": {
+   "queryReplacement": "={{ [String($(\"Prepare Search Window\").item.json.clinic_id || \"\"), String($(\"Prepare Search Window\").item.json.doctor_id || \"\"), String($(\"Prepare Search Window\").item.json.requested_date || \"\")] }}"
+  }
+ }
+}

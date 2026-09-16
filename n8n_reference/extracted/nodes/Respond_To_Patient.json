@@ -1,0 +1,11 @@
+{
+ "name": "Respond To Patient",
+ "type": "n8n-nodes-base.respondToWebhook",
+ "typeVersion": 1.5,
+ "parameters": {
+  "respondWith": "json",
+  "responseBody": "={{ { reply_text: (() => {\n  const failed = (() => {\n  const read = (name) => { try { return $(name).first().json || {}; } catch (_) { return {}; } };\n  const initial = read('Save Conversation State');\n  const retry = read('Save Conversation State (retry) (v18)');\n  const retryRan = Object.keys(retry).length > 0;\n  const hasTransportError = (value) => Boolean(value && (value.error || value.errorMessage || value.errorDetails || Number(value.statusCode) >= 400 || Number(value.status) >= 400));\n  return hasTransportError(initial) || hasTransportError(retry) || retry.saved === false || (!retryRan && initial.saved === false && initial.rejected_reason !== 'CONCURRENT_STATE_STALE');\n})();\n  if (failed) return 'تعذر حفظ حالة المحادثة حاول مرة أخرى';\n  const guard = (() => { try { const g = $('Reply Guard (Deterministic)').first().json || {}; return (g._reply_guard && g._reply_guard.override) || null; } catch (_) { return null; } })();\n  if (guard) return guard;\n  return $(\"Extract Single Agent Reply\").first().json.rendered_reply;\n})(), conversation_id: $(\"Normalize & Validate\").first().json.conversation_id, clinic_id: $(\"Normalize & Validate\").first().json.clinic_id, outgoing_message_id: $(\"Log Outgoing Message\").first().json.id || null, response_code: $(\"Response Policy (Deterministic)\").first().json.response_code, metadata: { intent: $(\"Response Policy (Deterministic)\").first().json.output?.intent, operation_status: $(\"Response Policy (Deterministic)\").first().json.output?.operation_status, appointment_id: $(\"Response Policy (Deterministic)\").first().json.output?.appointment_id, escalate: $(\"Response Policy (Deterministic)\").first().json.output?.escalate, proposed_action: $(\"Response Policy (Deterministic)\").first().json.output?.proposed_action, processed_at: $now.toISO() }, _debug: { deterministic_override: (() => { try { const g = $('Reply Guard (Deterministic)').first().json || {}; return Boolean(g._reply_guard && g._reply_guard.override); } catch (_) { return false; } })() } } }}",
+  "options": {}
+ },
+ "credentials": []
+}

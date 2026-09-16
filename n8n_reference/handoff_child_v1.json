@@ -1,0 +1,196 @@
+{
+ "id": "SfzXYzvQ2cvNH1v9",
+ "name": "Handoff Child v1",
+ "active": true,
+ "isArchived": false,
+ "versionId": "aecc9263-b16b-484e-92b7-c085a45816a9",
+ "activeVersionId": "aecc9263-b16b-484e-92b7-c085a45816a9",
+ "triggerCount": 0,
+ "nodeCount": 4,
+ "createdAt": "2026-08-19T08:25:58.034Z",
+ "updatedAt": "2026-09-05T14:29:16.423Z",
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true,
+  "errorWorkflow": "KmQZ9bXmmP1YEZht"
+ },
+ "tags": [],
+ "parentFolderId": null,
+ "description": "Sub-workflow called by agent k2 for human handoff: creates or reuses a handoff_requests row (pauses the bot) via rpc_handoff_create_or_reuse. Typed inputs; returns {success, code, handoff, conversation_id, correlation_id, created, audit_status}.",
+ "scopes": [
+  "execution:reveal",
+  "workflow:create",
+  "workflow:delete",
+  "workflow:disableRedaction",
+  "workflow:enableRedaction",
+  "workflow:execute",
+  "workflow:execute-chat",
+  "workflow:export",
+  "workflow:import",
+  "workflow:list",
+  "workflow:move",
+  "workflow:publish",
+  "workflow:read",
+  "workflow:share",
+  "workflow:unpublish",
+  "workflow:unshare",
+  "workflow:update"
+ ],
+ "canExecute": true,
+ "connections": {
+  "Handoff Child Input": {
+   "main": [
+    [
+     {
+      "node": "Normalize Handoff Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Normalize Handoff Input": {
+   "main": [
+    [
+     {
+      "node": "Create or Reuse Handoff Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create or Reuse Handoff Request": {
+   "main": [
+    [
+     {
+      "node": "Build Handoff Structured Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodes": [
+  {
+   "parameters": {
+    "workflowInputs": {
+     "values": [
+      {
+       "name": "clinic_id"
+      },
+      {
+       "name": "conversation_id"
+      },
+      {
+       "name": "patient_id"
+      },
+      {
+       "name": "channel_type"
+      },
+      {
+       "name": "channel_id"
+      },
+      {
+       "name": "handoff_reason"
+      },
+      {
+       "name": "reason_code"
+      },
+      {
+       "name": "reason_note"
+      },
+      {
+       "name": "correlation_id"
+      },
+      {
+       "name": "source_message_id"
+      },
+      {
+       "name": "priority"
+      },
+      {
+       "name": "context_snapshot",
+       "type": "object"
+      },
+      {
+       "name": "metadata",
+       "type": "object"
+      }
+     ]
+    }
+   },
+   "id": "4e35282a-6c64-43ae-b255-76aeb8917562",
+   "name": "Handoff Child Input",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    0
+   ]
+  },
+  {
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const input = $json || {};\nconst clean = (value) => value === undefined || value === null ? '' : String(value).trim();\nconst toDeterministicUuid = (value) => {\n  const raw = clean(value);\n  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) return raw.toLowerCase();\n  const source = raw || 'handoff-channel';\n  const hash = (seed) => { let h = seed >>> 0; for (let i = 0; i < source.length; i += 1) { h ^= source.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16).padStart(8, '0'); };\n  let hex = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35].map(hash).join('');\n  hex = `${hex.slice(0, 12)}5${hex.slice(13, 16)}a${hex.slice(17)}`;\n  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;\n};\nconst rawChannelId = clean(input.channel_id);\nconst normalizedChannelId = rawChannelId || null;\nreturn { json: {\n  clinic_id: clean(input.clinic_id),\n  conversation_id: clean(input.conversation_id),\n  patient_id: clean(input.patient_id),\n  channel_type: clean(input.channel_type).toLowerCase(),\n  channel_id: rawChannelId || null,\n  handoff_reason: clean(input.handoff_reason),\n  reason_code: clean(input.reason_code).toUpperCase(),\n  reason_note: clean(input.reason_note) || null,\n  correlation_id: clean(input.correlation_id),\n  source_message_id: clean(input.source_message_id) || null,\n  priority: clean(input.priority || 'NORMAL').toUpperCase(),\n  context_snapshot: input.context_snapshot && typeof input.context_snapshot === 'object' && !Array.isArray(input.context_snapshot) ? input.context_snapshot : {},\n  metadata: { ...(input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata) ? input.metadata : {}), raw_channel_id: rawChannelId || null, normalized_channel_id: normalizedChannelId }\n} };"
+   },
+   "id": "892c64d1-15da-4532-8963-60361e052837",
+   "name": "Normalize Handoff Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    288,
+    0
+   ]
+  },
+  {
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "-- handoff-link-v3: resolve the channel from the conversation row itself.\n-- rpc_handoff_create_or_reuse enforces conversations.channel_id = p_channel_id, so the\n-- conversation's own channel is the only id that can pass the scope check. The channel_id\n-- passed by the parent is kept in metadata for audit only. Empty uuids degrade to NULL so\n-- the RPC returns INVALID_INPUT instead of the query failing with a cast error.\nSELECT public.rpc_handoff_create_or_reuse(\n  NULLIF($1::text, '')::uuid,\n  NULLIF($2::text, '')::uuid,\n  NULLIF($3::text, '')::uuid,\n  $4::text,\n  (SELECT c.channel_id\n     FROM public.conversations c\n    WHERE c.id = NULLIF($2::text, '')::uuid\n      AND c.clinic_id = NULLIF($1::text, '')::uuid\n      AND c.patient_id = NULLIF($3::text, '')::uuid\n      AND c.deleted_at IS NULL),\n  $5::text,\n  $6::text,\n  $7::text,\n  NULLIF($8::text, ''),\n  NULLIF($9::text, '')::uuid,\n  $10::jsonb,\n  $11::jsonb\n) AS result;",
+    "options": {
+     "queryReplacement": "={{ [String($(\"Normalize Handoff Input\").item.json.clinic_id || \"\"), String($(\"Normalize Handoff Input\").item.json.conversation_id || \"\"), String($(\"Normalize Handoff Input\").item.json.patient_id || \"\"), String($(\"Normalize Handoff Input\").item.json.channel_type || \"\"), String($(\"Normalize Handoff Input\").item.json.handoff_reason || \"\"), String($(\"Normalize Handoff Input\").item.json.reason_code || \"\"), String($(\"Normalize Handoff Input\").item.json.priority || \"NORMAL\"), String($(\"Normalize Handoff Input\").item.json.source_message_id || \"\"), String($(\"Normalize Handoff Input\").item.json.correlation_id || \"\"), JSON.stringify($(\"Normalize Handoff Input\").item.json.context_snapshot || {}), JSON.stringify($(\"Normalize Handoff Input\").item.json.metadata || {}) ] }}"
+    }
+   },
+   "id": "e75cbb78-0387-4031-ba35-2ee9f58dbe02",
+   "name": "Create or Reuse Handoff Request",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    608,
+    0
+   ],
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "credentials": {
+    "postgres": {
+     "id": "BaztpCLb3igivhUi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const raw = $json || {};\nlet result = raw.result ?? raw;\nif (typeof result === 'string') {\n  try { result = JSON.parse(result); } catch (error) { result = { success: false, code: 'DATABASE_ERROR', handoff: null }; }\n}\nreturn { json: {\n  success: result.success === true,\n  code: result.code || (result.success === true ? 'HANDOFF_CREATED' : 'INTERNAL_ERROR'),\n  handoff: result.handoff || null,\n  conversation_id: result.conversation_id || $('Normalize Handoff Input').item.json.conversation_id || null,\n  correlation_id: result.correlation_id || $('Normalize Handoff Input').item.json.correlation_id || null,\n  created: result.created === true,\n  audit_status: result.audit_status || null,\n  audit_error: result.audit_error || null\n} };"
+   },
+   "id": "497579f9-c6e5-47c0-a36f-ad655661905d",
+   "name": "Build Handoff Structured Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    928,
+    0
+   ]
+  }
+ ],
+ "nodeGroups": [],
+ "activeVersion": {
+  "sameAsDraft": true
+ },
+ "meta": {
+  "aiBuilderAssisted": true,
+  "builderVariant": "mcp"
+ }
+}

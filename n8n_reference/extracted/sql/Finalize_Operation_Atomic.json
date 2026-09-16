@@ -1,0 +1,7 @@
+{
+ "name": "Finalize Operation (Atomic)",
+ "operation": "executeQuery",
+ "query": "SELECT c.operation_id, c.operation_status, c.mutation_status, c.response_json\nFROM public.flow_up_complete_operation(\n  $1::uuid,\n  NULLIF(NULLIF($2::text, '__NULL__'), ''),\n  NULLIF(NULLIF($3::text, '__NULL__'), ''),\n  NULLIF(NULLIF($4::text, '__NULL__'), ''),\n  NULLIF(convert_from(decode(NULLIF($5::text, '__NULL__'), 'base64'), 'UTF8'), '')::jsonb,\n  NULLIF(NULLIF($6::text, '__NULL__'), ''),\n  NULLIF(convert_from(decode(NULLIF($7::text, '__NULL__'), 'base64'), 'UTF8'), '')::jsonb\n) c\nLIMIT 1;",
+ "queryReplacement": "={{ [$(\"Prepare Operation Finalize Input\").item.json.finalize_clinic_id || \"00000000-0000-0000-0000-000000000000\", $(\"Prepare Operation Finalize Input\").item.json.finalize_operation_id || \"__NULL__\", $(\"Prepare Operation Finalize Input\").item.json.finalize_status || \"INCONCLUSIVE\", $(\"Prepare Operation Finalize Input\").item.json.finalize_mutation_status || \"UNKNOWN\", $(\"Prepare Operation Finalize Input\").item.json.finalize_response_b64 || \"__NULL__\", $(\"Prepare Operation Finalize Input\").item.json.finalize_child_execution_id || \"__NULL__\", $(\"Prepare Operation Finalize Input\").item.json.finalize_last_error_b64 || \"__NULL__\" ] }}",
+ "notes": "P1.6: record terminal or inconclusive mutation outcome atomically."
+}

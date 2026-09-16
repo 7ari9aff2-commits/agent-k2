@@ -1,0 +1,16 @@
+{
+ "name": "Call rpc_get_available_slots (Deterministic)",
+ "type": "n8n-nodes-base.httpRequest",
+ "parameters": {
+  "method": "POST",
+  "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/rpc_get_available_slots",
+  "authentication": "genericCredentialType",
+  "genericAuthType": "httpCustomAuth",
+  "sendBody": true,
+  "specifyBody": "json",
+  "jsonBody": "={{ JSON.stringify({ p_clinic_id: $json.clinic_id, p_start_date: $json.start_date, p_end_date: $json.end_date, p_doctor_id: $json.doctor_id || null, p_service_id: $json.service_id || null }) }}",
+  "options": {
+   "timeout": 15000
+  }
+ }
+}

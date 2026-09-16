@@ -1,0 +1,794 @@
+[
+  {
+    "id": "d78e2cbd-5963-4a17-983c-c7adb9d32ac5",
+    "name": "Webhook - Incoming Message",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2.1,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "af674153-4c36-4955-9abd-0a7c77acf5a9",
+    "name": "Normalize & Validate",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "b751d1fc-cb53-4ff7-a7c5-9af139d08a63",
+    "name": "Log Incoming Message",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "9d88a61f-17c2-4dc2-9147-245cd187cca0",
+    "name": "Get Clinic Context",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "541cc1ad-61c3-4007-9137-6294b2e7985a",
+    "name": "Get Conversation State",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "64c61b7b-a000-4967-91e1-a8593b2ee592",
+    "name": "Booking Assistant Agent",
+    "type": "@n8n/n8n-nodes-langchain.agent",
+    "typeVersion": 3.1,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "eb6b8619-0aee-4213-b313-e4d8bd3eafcd",
+    "name": "DeepSeek Model",
+    "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+    "typeVersion": 1.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "4bf136e3-3b2c-4527-9cd4-163968c215c1",
+    "name": "Save Conversation State",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "6e0f74de-bca2-4b9f-863d-cf3210d4c71a",
+    "name": "Log Outgoing Message",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e81c909b-b7ee-4384-934e-361d11bd4629",
+    "name": "Respond To Patient",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "2f3a8c3d-7388-49e9-993c-e3fdf7840925",
+    "name": "Derive Actions (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "0bd8fac2-4921-4ef8-bf9d-206626751b96",
+    "name": "Build Audit Entry",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "865b505d-174b-4c98-8b1c-5787a03ee4b6",
+    "name": "Log Agent Audit Entry",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "ae0d2739-4b13-4691-84c4-737d18aaaa40",
+    "name": "Normalize Agent Output (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "4f28da02-681c-4cc5-80b4-979e9ae6cbd6",
+    "name": "Check Duplicate Message",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "10887483-3aba-423c-8f48-27195e75b42b",
+    "name": "Respond Duplicate Message",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e46e0ae0-9e42-4cee-96ad-aa69923786a4",
+    "name": "Validate Patient Ownership",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "590f5846-72a9-46b6-b8eb-28460faa86e3",
+    "name": "Check Patient Ownership",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "c92dbc56-c833-47f1-8318-4aaf4b468318",
+    "name": "Respond Unauthorized Context",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "da3eb044-c75c-4ad3-9509-3eacc23d4065",
+    "name": "Build Persistent Conversation State",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "1935faea-ba2a-4be2-af5f-275bf77d7954",
+    "name": "System Orchestrator (Policy)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "ce7e3922-b23a-461d-8c3b-9c730708a8fb",
+    "name": "IF Approved Create Action",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "3151f319-6266-4078-a0c0-16f564e743e5",
+    "name": "Prepare Execute Context",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "Resolves all booking IDs from multiple sources for the Execute SQL node",
+    "disabled": false
+  },
+  {
+    "id": "9424f662-0768-44de-a425-cac5f852b4bf",
+    "name": "Execute Approved Create Appointment",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "51ce2874-0457-49a3-bde9-053668017ce7",
+    "name": "Response Policy (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "bdf03285-86d2-494a-8d77-dafc62a1f93a",
+    "name": "IF Approved Cancel Action",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e0bdf55a-bca8-4b32-9536-2229db50b601",
+    "name": "Execute Approved Cancel Appointment",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "421fab4f-097f-4e65-b6bb-718700d8d345",
+    "name": "IF Approved Reschedule Action",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "ee5b3c27-4f6b-4b3c-80b5-188a31bf4338",
+    "name": "Execute Approved Reschedule Appointment",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "46e927d3-daa6-495f-b60d-cb442e2cfd30",
+    "name": "Evaluate Completed Create Replay",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "95521102-a3b5-4b4b-8406-ecc895462b7b",
+    "name": "Completed Create Replay?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e9e170e1-d8ec-4e51-94f8-d185e8cc848e",
+    "name": "Resolve Booking IDs (Deterministic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "0679bcf2-7e57-4904-be41-25a89fe61b74",
+    "name": "Apply Resolved Booking IDs (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "54ec482d-5883-451c-b81a-389f7354a8c8",
+    "name": "Resolve Doctor Inquiry (Deterministic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "9b0f7ac9-2080-48fd-b0b8-e23759a49f45",
+    "name": "Resolve Service Fact (Deterministic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "834abe4c-f8e4-4cf0-af47-8a40efd73ea9",
+    "name": "IF Handoff Required",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "1d14b816-c95d-46a9-bc3b-0ea85d7d5fcd",
+    "name": "Prepare Handoff Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e5cd984e-c25f-4066-b034-04988b17be92",
+    "name": "Execute Handoff Child",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "5133d47d-2df6-44d4-a892-e05a9d0e1c37",
+    "name": "Restore Handoff Context",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "ed538e87-2404-41cd-9fcb-2301e5af4fd1",
+    "name": "Execution Transition Guard (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "0ff83b33-2151-408c-825d-c7b8471b9897",
+    "name": "Validate Child Envelope",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "cfe180a6-3a95-4e31-8662-f353b6efb67a",
+    "name": "Lookup Business Time Context",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "fc295760-0dc2-49ba-9639-984defa3fd84",
+    "name": "Business Time Gate (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "2c99cef7-baea-4163-b1b3-e62b489cbeaf",
+    "name": "IF Business Time Allowed",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "431cf202-91db-4abd-af72-b195d02a65a5",
+    "name": "Prepare Operation Claim Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "P1.6: prepare canonical claim arguments from deterministic decision only.",
+    "disabled": false
+  },
+  {
+    "id": "99b5c22e-0b4e-4c7f-9f4e-cf2c0c97a0d9",
+    "name": "Claim Operation (Atomic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": "P1.6: atomic ledger claim; no child can run without OWNER/OWNER_RETRY.",
+    "disabled": false
+  },
+  {
+    "id": "8c4cff27-b713-49d4-9fa4-62643cbfd894",
+    "name": "Apply Operation Claim (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "P1.6: map ledger decisions to replay, conflict, in-progress, or child-allowed.",
+    "disabled": false
+  },
+  {
+    "id": "a52ec5e4-a66a-4c49-9b2a-509d58c11a86",
+    "name": "IF Operation Claim Required",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": "P1.6: only side-effect operations enter the ledger claim.",
+    "disabled": false
+  },
+  {
+    "id": "e9220201-2034-4947-b980-51c55961acd7",
+    "name": "IF Claim Allows Child",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": "P1.6: fail-closed routing; only OWNER/OWNER_RETRY reaches child execution.",
+    "disabled": false
+  },
+  {
+    "id": "35350c58-fbdc-4590-baa3-504df1955ba0",
+    "name": "Prepare Operation Finalize Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "P1.6: classify child result and prepare safe base64 JSON for ledger finalize.",
+    "disabled": false
+  },
+  {
+    "id": "b2ced32e-e5a6-4f0b-8742-f2d863e0ae0e",
+    "name": "Finalize Operation (Atomic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": "P1.6: record terminal or inconclusive mutation outcome atomically.",
+    "disabled": false
+  },
+  {
+    "id": "64bc578f-8bd9-4d81-9eff-990179566010",
+    "name": "Merge Operation Completion",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "P1.6: merge ledger completion evidence back into response path.",
+    "disabled": false
+  },
+  {
+    "id": "146aa50f-1fa3-4877-8fb1-328d24439162",
+    "name": "Build Save State RPC Body",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "1f33b6dc-e87c-4753-8365-051f09ddd91c",
+    "name": "Stale Save? (v18)",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e9569f03-0b9a-4c47-a60d-7ad9a03a633a",
+    "name": "Get Conversation State (retry) (v18)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "3623ea09-46f6-457a-93ad-5b0f823aacf1",
+    "name": "Build Retry RPC Body (v18)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "90fd1893-4e7c-4f77-9301-d3be060e9f76",
+    "name": "Save Conversation State (retry) (v18)",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "411a55d5-93cc-47a3-bca2-d1f5dc510c5a",
+    "name": "Prepare Execute Input",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "07d9cdc3-0217-4b7b-b7bc-55cb1bc17259",
+    "name": "Route Single Agent Phase",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "505b4dba-33af-45e7-bcd3-5f5860457487",
+    "name": "Prepare Single Agent Result Context",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "5c05cb23-bba5-44d7-bc04-7b9214f6782b",
+    "name": "IF Single Agent Result Phase",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "deb4d2c3-260f-4b74-92a3-b9f2c26d0958",
+    "name": "Extract Single Agent Reply",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "b34adaa8-4fef-473d-b3e8-fd85a96b90c2",
+    "name": "Get Active Handoff Request",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.6,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "cbece7fe-f312-406d-a30c-96e448df3c78",
+    "name": "IF Handoff Active",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "0d7a0a55-7aa1-4ccb-8298-dbc974d52259",
+    "name": "Respond Handoff Suppressed",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "b1002dc6-7b24-44c3-8a2c-c6110d825e0a",
+    "name": "Build Clinic Persona Context (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "884cfecc-156b-49ad-a75f-b9be2d516a01",
+    "name": "Handle Normalize Error (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "60dc18c7-da2a-44d9-9ba7-26de0745df6d",
+    "name": "IF Normalize Error",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "63ee29ff-a115-438b-99f7-15330eccae21",
+    "name": "Respond Invalid Inbound Payload",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "b9ad791c-2fab-4f48-8763-ab97925dfb53",
+    "name": "Get Recent Window 2h",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": "Fetches up to 6 messages from the rolling 2-hour window. It expands to an uncapped-time, maximum-12-message window only when the current message contains an explicit historical booking reference.",
+    "disabled": false
+  },
+  {
+    "id": "9deebf3d-6a58-4728-87e1-1a426b428d68",
+    "name": "Build Outgoing Message SQL Parameters",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "acb4aac9-33d4-4110-b5a5-b3d25311084c",
+    "name": "Persist Pending Confirmation (Deterministic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "10d34dba-5e7b-4811-9ff8-a2c872808a86",
+    "name": "Compute AI Request Usage (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "f722ad8b-e958-4a7e-8939-7b49e7720535",
+    "name": "Insert AI Request Usage",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "7a23dae4-451a-4247-b6ea-a4bfe816b0e6",
+    "name": "Resolve Branch Inquiry (Deterministic)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "a7b7b531-29fb-4c30-a25b-f1522e84ccf9",
+    "name": "IF Early Security Reject",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "6f7ad0a4-e692-4f4a-8d29-d3c5c346240a",
+    "name": "K2 Inbound Burst Rate Gate",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "6289d1c1-c65d-4171-9ddd-f1b35bb303bb",
+    "name": "IF K2 Burst Allowed",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "50b32537-aa23-4e5c-8582-bead111bde39",
+    "name": "Respond K2 Burst Protected",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "51893cf0-f27e-4c69-8c6d-b190cfbb5282",
+    "name": "Mark K2 Burst Message Deferred",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "5ed7035e-5db9-431c-a978-8fda4b70e2a2",
+    "name": "Log K2 Rate Decision",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "e8b43e6a-4c63-46fc-84c9-197cd9bb98a7",
+    "name": "Extract K2 Signature Context",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "e192f409-d50e-4b3f-ae18-ed173d4f8df7",
+    "name": "Verify K2 Inbound Signature",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "bc84cb99-90ae-4078-b797-9358edb53e11",
+    "name": "IF K2 Signature Accepted",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": true,
+    "disabled": false
+  },
+  {
+    "id": "749bdab1-7ab2-477f-a5df-a2603e9db0dc",
+    "name": "Prefetch Clinic FAQ",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.3,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "b2a27ee3-1fd9-4766-87d4-995733694dae",
+    "name": "P1.7 Patient Field Normalization",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": "F1: Phone (22 countries, E.164) | F4: Age (Arabic-Indic + EN + standalone) | F5: Address (postal + EN + AR). Added in Phase 1 to unblock System Orchestrator size limit.",
+    "disabled": false
+  },
+  {
+    "id": "1f01150f-8c13-4fe2-a22e-d6da5f2cee1d",
+    "name": "R3 LLM Response Safety",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "6633a67e-85e0-4582-acfe-1e9b22797f44",
+    "name": "R1 Agent Reply Recovery",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "08f4e5f1-014a-4748-b9fc-055449d09ff6",
+    "name": "R2 LLM Error Detection",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "18f6f94a-fb45-44d7-a3d7-3a3988b8d750",
+    "name": "IF Contract Needs Repair",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "fab7b6b9-3dee-4c0b-a445-325cc12dd7b1",
+    "name": "Build Repair Prompt (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "125f408c-30cb-4c3e-b52c-f0ee07a05ce5",
+    "name": "DeepSeek Repair Model",
+    "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+    "typeVersion": 1.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "77a192d3-a092-4b55-9726-61e25ab45cb4",
+    "name": "DeepSeek Repair Chain",
+    "type": "@n8n/n8n-nodes-langchain.chainLlm",
+    "typeVersion": 1.9,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "9f7a5d48-fa70-4709-929f-50e327798ce2",
+    "name": "Validate Repaired Contract (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "e87f2f18-4844-471b-a2ee-8c7f62ae9c31",
+    "name": "Check Doctor Availability",
+    "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "19f4a5b6-7c8d-4e9f-a0b1-c2d3e4f5a6b7",
+    "name": "IF Non-Scheduling Turn (v19)",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "0449fe91-4578-4ec0-b897-ccdea77deb8d",
+    "name": "Read Fresh Offer (Midturn)",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "865f575a-aba9-49f0-84d9-0c977b210c30",
+    "name": "K2 Contract Adapter (v4 to v3)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  },
+  {
+    "id": "ac6bb964-1c27-4786-85ef-775500a0bef7",
+    "name": "Reply Guard (Deterministic)",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "notes": null,
+    "disabled": false
+  }
+]

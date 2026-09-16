@@ -1,0 +1,30 @@
+{
+ "name": "IF Handoff Active",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   },
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "handoff-active-condition-20260819",
+     "leftValue": "={{ !!$json.handoff_request_id }}",
+     "operator": {
+      "operation": "true",
+      "singleValue": true,
+      "type": "boolean"
+     },
+     "rightValue": true
+    }
+   ]
+  },
+  "options": {}
+ },
+ "credentials": []
+}

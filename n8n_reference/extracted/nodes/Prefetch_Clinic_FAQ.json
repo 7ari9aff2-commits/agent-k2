@@ -1,0 +1,46 @@
+{
+ "name": "Prefetch Clinic FAQ",
+ "type": "n8n-nodes-base.executeWorkflow",
+ "typeVersion": 1.3,
+ "parameters": {
+  "workflowId": {
+   "__rl": true,
+   "value": "U5fxNiVF36rUzIFp",
+   "mode": "id",
+   "cachedResultName": "k2 - search_clinic_faq"
+  },
+  "workflowInputs": {
+   "mappingMode": "defineBelow",
+   "value": {
+    "clinic_id": "={{ $(\"Get Clinic Context\").first().json.clinic_id }}",
+    "question": "={{ $(\"Normalize & Validate\").first().json.message_text }}"
+   },
+   "matchingColumns": [],
+   "schema": [
+    {
+     "id": "clinic_id",
+     "displayName": "clinic_id",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    },
+    {
+     "id": "question",
+     "displayName": "question",
+     "required": false,
+     "defaultMatch": false,
+     "display": true,
+     "canBeUsedToMatch": true,
+     "type": "string"
+    }
+   ],
+   "attemptToConvertTypes": false,
+   "convertFieldsToString": false
+  },
+  "mode": "each",
+  "options": {}
+ },
+ "credentials": []
+}

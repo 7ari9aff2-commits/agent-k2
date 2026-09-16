@@ -1,0 +1,26 @@
+{
+ "name": "Needs Schedule Fallback?",
+ "type": "n8n-nodes-base.if",
+ "parameters": {
+  "conditions": {
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 1
+   },
+   "conditions": [
+    {
+     "leftValue": "={{ $json.needs_schedule_fallback }}",
+     "operator": {
+      "type": "boolean",
+      "operation": "equals"
+     },
+     "rightValue": true
+    }
+   ],
+   "combinator": "and"
+  },
+  "options": {}
+ }
+}

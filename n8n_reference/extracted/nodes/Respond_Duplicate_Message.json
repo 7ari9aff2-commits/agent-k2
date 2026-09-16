@@ -1,0 +1,13 @@
+{
+ "name": "Respond Duplicate Message",
+ "type": "n8n-nodes-base.respondToWebhook",
+ "typeVersion": 1.5,
+ "parameters": {
+  "respondWith": "json",
+  "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true, idempotency_key: $(\"Normalize & Validate\").item.json.idempotency_key, message: 'already_processed' }) }}",
+  "options": {
+   "responseCode": 200
+  }
+ },
+ "credentials": []
+}

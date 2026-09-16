@@ -1,0 +1,13 @@
+{
+ "name": "Respond Invalid Inbound Payload",
+ "type": "n8n-nodes-base.respondToWebhook",
+ "typeVersion": 1.1,
+ "parameters": {
+  "respondWith": "json",
+  "responseBody": "={{ { reply_text: $json.normalization_error_message || 'تعذر معالجة الطلب بسبب نقص بيانات الرسالة الأساسية', response_code: $json.normalization_error_code || 'INVALID_INBOUND_PAYLOAD', metadata: { missing_fields: $json.normalization_missing_fields || [] } } }}",
+  "options": {
+   "responseCode": 400
+  }
+ },
+ "credentials": []
+}

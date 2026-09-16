@@ -1,0 +1,44 @@
+{
+ "name": "IF Approved Create Action",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "leftValue": "={{ $json.system_decision && $json.system_decision.allowed !== undefined ? $json.system_decision.allowed : ($json.allowed !== undefined ? $json.allowed : false) }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": null
+    },
+    {
+     "leftValue": "={{ $json.system_decision && $json.system_decision.action !== undefined ? $json.system_decision.action : ($json.action !== undefined ? $json.action : \"\") }}",
+     "operator": {
+      "operation": "equals",
+      "type": "string"
+     },
+     "rightValue": "create_appointment"
+    },
+    {
+     "leftValue": "={{ (() => { const d = $('System Orchestrator (Policy)').first().json.system_decision || {}; return d.patient_data_complete === true && d.patient_data_gate_satisfied === true; })() }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": null
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

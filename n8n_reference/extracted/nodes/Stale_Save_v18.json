@@ -1,0 +1,38 @@
+{
+ "name": "Stale Save? (v18)",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "id": "3a087fcc-2eb9-4213-f5ce-9cb5376fbb2d",
+     "leftValue": "={{ $json.saved }}",
+     "operator": {
+      "operation": "equals",
+      "type": "boolean"
+     },
+     "rightValue": false
+    },
+    {
+     "id": "b59ad220-f9b9-4ff1-c374-89723f60a1ea",
+     "leftValue": "={{ $json.rejected_reason }}",
+     "operator": {
+      "operation": "equals",
+      "type": "string"
+     },
+     "rightValue": "CONCURRENT_STATE_STALE"
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 1
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}

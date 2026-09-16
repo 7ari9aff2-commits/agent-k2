@@ -1,0 +1,36 @@
+{
+ "name": "IF Approved Reschedule Action",
+ "type": "n8n-nodes-base.if",
+ "typeVersion": 2.2,
+ "parameters": {
+  "conditions": {
+   "combinator": "and",
+   "conditions": [
+    {
+     "leftValue": "={{ $json.system_decision && $json.system_decision.allowed !== undefined ? $json.system_decision.allowed : ($json.allowed !== undefined ? $json.allowed : false) }}",
+     "operator": {
+      "operation": "true",
+      "type": "boolean"
+     },
+     "rightValue": null
+    },
+    {
+     "leftValue": "={{ $json.system_decision && $json.system_decision.action !== undefined ? $json.system_decision.action : ($json.action !== undefined ? $json.action : \"\") }}",
+     "operator": {
+      "operation": "equals",
+      "type": "string"
+     },
+     "rightValue": "reschedule_appointment"
+    }
+   ],
+   "options": {
+    "caseSensitive": true,
+    "leftValue": "",
+    "typeValidation": "strict",
+    "version": 2
+   }
+  },
+  "options": {}
+ },
+ "credentials": []
+}
