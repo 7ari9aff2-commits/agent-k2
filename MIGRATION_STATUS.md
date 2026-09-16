@@ -110,3 +110,15 @@ Deferred — not blocking the port.
 - No n8n modification (n8n stays active backup).
 - Golden-master fixtures from real n8n executions (next pass).
 - Shadow-mode runner (next pass).
+
+## DEPLOYED 2026-09-17 — Railway
+- Project `agent-k2` (renamed from feisty-connection), service `core-engine`, environment production.
+- Source: GitHub 7ari9aff2-commits/agent-k2 @ main (92db170), builder RAILPACK, Python 3.12,
+  start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, healthcheck /health.
+- 9 env vars set server-side (DATABASE_URL, K2_INTERNAL_TOKEN, LLM_PRIMARY_*, LLM_REPAIR_*,
+  PYTHON_VERSION).
+- Public URL: https://core-engine-production-a186.up.railway.app
+- First deployment SUCCESS. Live checks: /health 200; 401 without/with wrong token; invalid
+  payload → the exact n8n 400 Arabic body; well-formed payload with bogus signature → 403
+  fail-closed via the live DB RPC (proves Railway → Supabase pooler wiring end to end).
+- NEXT: DRY_RUN flag + shadow-mode comparison against live n8n before flipping the sender URL.
