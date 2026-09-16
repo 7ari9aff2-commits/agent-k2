@@ -863,7 +863,7 @@ async def log_agent_audit_entry(entry: dict) -> dict:
             _text(item.get("model")),
             _jsonb(item.get("tool_calls")),
             _text(item.get("tool_call_count")),
-            _text(item.get("total_time_ms")),
+            _text(int(round(item["total_time_ms"])) if isinstance(item.get("total_time_ms"), (int, float)) else item.get("total_time_ms")),
             _text(item.get("received_at")),
             _text(_js_or(nv.get("channel_type"), None)),
             _text(_js_or(item.get("understanding_model_intent"), None)),

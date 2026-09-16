@@ -250,11 +250,17 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         state_data=state_data,
         faq_result=faq_result,
     )
-    raw_llm_output = await dialogue.call_primary_model_with_tool(user_message, context={
-        "clinic_id": normalized.get("clinic_id"),
-        "conversation_id": normalized.get("conversation_id"),
-        "patient_id": normalized.get("patient_id"),
-    })
+    try:
+        raw_llm_output = await dialogue.call_primary_model_with_tool(user_message, context={
+            "clinic_id": normalized.get("clinic_id"),
+            "conversation_id": normalized.get("conversation_id"),
+            "patient_id": normalized.get("patient_id"),
+        })
+    except Exception:
+        # n8n routed model failures to the error workflow; here the R-layers + policy
+        # render the deterministic PROVIDER_UNAVAILABLE path instead of a raw 500.
+        logger.exception("primary LLM failed — degrading via MODEL_CALL_FAILED path")
+        raw_llm_output = ""
 
     # ── L27-29 R3 LLM Response Safety → R2 Error Detection → R1 Reply Recovery ─
     safety = llm_safety.r3_llm_response_safety({"output": raw_llm_output})
@@ -290,16 +296,19 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             "normalize_agent_output": normalized_agent_output, "normalize_validate": normalized,
             "clinic_persona_context": persona_context, "clinic_context": clinic_context,
             "patient_ownership": ownership})
-        repair_raw = await dialogue.call_repair_model(repair_prompt_item.get("prompt") or "")
-        repaired_result = llm_safety.validate_repaired_contract_deterministic(
-            {"text": repair_raw, "output": repair_raw},
-            {"normalize_agent_output": normalized_agent_output, "normalize_validate": normalized,
-             "conversation_state": state_row, "clinic_context": clinic_context,
-             "patient_ownership": ownership, "persona_builder": persona_context,
-             "clinic_persona_context": persona_context,
-             "repair_prompt": repair_prompt_item})
-        normalized_agent = repaired_result
-        normalized_agent_output = repaired_result
+        try:
+            repair_raw = await dialogue.call_repair_model(repair_prompt_item.get("prompt") or "")
+            repaired_result = llm_safety.validate_repaired_contract_deterministic(
+                {"text": repair_raw, "output": repair_raw},
+                {"normalize_agent_output": normalized_agent_output, "normalize_validate": normalized,
+                 "conversation_state": state_row, "clinic_context": clinic_context,
+                 "patient_ownership": ownership, "persona_builder": persona_context,
+                 "clinic_persona_context": persona_context,
+                 "repair_prompt": repair_prompt_item})
+            normalized_agent = repaired_result
+            normalized_agent_output = repaired_result
+        except Exception:
+            logger.exception("repair LLM failed — continuing with the degraded contract")
 
     # ── L38-40 Resolve Booking IDs → Apply Resolved Booking IDs → P1.7 ─────────
     booking_ids_result = await repository.resolve_booking_ids({

@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "<stdin>", line 29, in <module>
+  File "C:\Users\CS\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\CS\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\CS\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "D:\agent k2\app\api\v1\message.py", line 253, in _run
+    raw_llm_output = await dialogue.call_primary_model_with_tool(user_message, context={
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    })
+    ^^
+  File "D:\agent k2\app\services\dialogue.py", line 197, in call_primary_model_with_tool
+    message = await _chat_messages(messages)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\agent k2\app\services\dialogue.py", line 244, in _chat_messages
+    raise RuntimeError(f"primary LLM HTTP {resp.status_code}: {resp.text[:300]}")
+RuntimeError: primary LLM HTTP 403: {"code":403,"reason":"NOT_ENOUGH_BALANCE","message":"not enough balance","metadata":{}}
