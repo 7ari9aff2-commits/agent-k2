@@ -76,7 +76,14 @@ def stub_io(monkeypatch, *, signature=None, incoming=None, gate=None, llm_output
 
     monkeypatch.setattr(runner_mod.dialogue, "call_primary_model_with_tool", lambda user_message, context: _async(llm_output))
     monkeypatch.setattr(runner_mod.dialogue, "call_repair_model", lambda prompt: _async(SMALL_TALK_CONTRACT))
-    monkeypatch.setattr(runner_mod.faq_service, "search_clinic_faq", lambda payload: _async({"results": [], "count": 0}))
+    monkeypatch.setattr(runner_mod.dialogue, "compose_patient_reply", lambda context: _async({
+        "reply": "أهلاً بيك، تحت أمرك. تحب أساعدك في إيه؟",
+        "evidence_ids": ["patient.current_message"],
+        "missing_information": [],
+        "unsupported_claims": [],
+        "grounding_status": "supported",
+        "raw_output": "{}",
+    }))
     monkeypatch.setattr(runner_mod.handoff_service, "create_or_reuse_handoff", lambda payload: _async({"success": True}))
 
 

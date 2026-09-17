@@ -19,14 +19,13 @@ from fastapi.responses import JSONResponse
 
 from app.core.security import verify_internal_token
 from app.core.config import settings
-from app.core import agent_output, contract_adapter, gates, grounding, llm_safety, orchestrator, reply_guard, response_policy
+from app.core import agent_output, contract_adapter, gates, llm_safety, orchestrator, reply_guard, response_context, response_policy
 from app.db import repository
 from app.pipeline import normalize as normalize_mod
 from app.pipeline import patient_fields
 from app.pipeline import conditions_post, conditions_pre, stages_post, stages_pre
 from app.pipeline.respond import build_final_response
 from app.services import dialogue
-from app.services import faq as faq_service
 from app.services import handoff as handoff_service
 
 logger = logging.getLogger(__name__)
@@ -220,11 +219,55 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             current=replay_eval, normalize_validate=normalized, clinic_context=clinic_context,
             conversation_state=state_row))
         guard = reply_guard.apply_reply_guard({"response_policy": policy})
-        outgoing_params = stages_pre.build_outgoing_message_sql_parameters({
-            "normalized": normalized, "guard": guard, "policy": policy})
+        replay_context = response_context.build_reply_context(
+            normalized=normalized,
+            clinic_context=clinic_context,
+            state_data=state_data,
+            policy=policy,
+            decision=replay_eval,
+            normalized_agent_output={},
+            repaired_result={},
+            tool_events=[],
+            execution_results={"replay": replay_eval},
+            faq_result={},
+            guard=guard,
+        )
+        replay_composer: Dict[str, Any] = {}
+        try:
+            if getattr(settings, "LLM_COMPOSER_ENABLED", True):
+                replay_composer = await dialogue.compose_patient_reply(replay_context)
+        except Exception:
+            logger.exception("replay response composer failed — using deterministic safety fallback")
+        replay_reply = str((replay_composer or {}).get("reply") or "").strip()
+        replay_guard = guard
+        if replay_reply and isinstance((guard or {}).get("_reply_guard"), dict):
+            replay_guard = dict(guard)
+            replay_guard_meta = dict(guard.get("_reply_guard") or {})
+            replay_guard_meta["override"] = None
+            replay_guard_meta["superseded_by"] = "model_composer"
+            replay_guard["_reply_guard"] = replay_guard_meta
+        outgoing_params = stages_pre.build_outgoing_message_sql_parameters({}, {
+            "normalize_validate": normalized,
+            "save_conversation_state": {"saved": True},
+            "save_conversation_state_retry_v18": {},
+            "extract_single_agent_reply": {
+                "rendered_reply": replay_reply,
+                "render_used": bool(replay_reply),
+            },
+            "response_policy_deterministic": policy,
+            "reply_guard_deterministic": replay_guard,
+        })
         outgoing_row = await repository.log_outgoing_message(outgoing_params)
-        return build_final_response(normalized, (outgoing_row or {}).get("id"), {"saved": True}, {"saved": True},
-                                    guard, (policy.get("output") or {}).get("rendered_reply"), policy, _now_iso())
+        return build_final_response(
+            normalized,
+            (outgoing_row or {}).get("id"),
+            {"saved": True},
+            {"saved": True},
+            replay_guard,
+            replay_reply or (policy.get("output") or {}).get("rendered_reply"),
+            policy,
+            _now_iso(),
+        )
 
     # ── L21-23 Deterministic resolvers ─────────────────────────────────────────
     branch_fact = await repository.resolve_branch_inquiry({"normalized": normalized, "clinic_context": clinic_context})
@@ -238,11 +281,12 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         "resolve_doctor_inquiry_deterministic": doctor_fact,
         "resolve_branch_inquiry_deterministic": branch_fact})
 
-    # ── L25 Prefetch Clinic FAQ (sub-workflow port) ────────────────────────────
-    faq_result = await faq_service.search_clinic_faq(faq_service.FaqSearchInput(
-        clinic_id=normalized.get("clinic_id"), question=normalized.get("message_text")))
+    # ── L25 FAQ is on-demand through Search_Clinic_FAQ ────────────────────────
+    # Do not prefetch on every turn. The dialogue model decides whether the user is
+    # asking for clinic facts and invokes the Supabase-backed tool when needed.
+    faq_result: Optional[Dict[str, Any]] = None
 
-    # ── L26 Booking Assistant Agent (LLM with the availability tool) ───────────
+    # ── L26 Booking Assistant Agent (LLM with reception tools) ────────────────
     user_message = dialogue.build_user_message(
         clinic_context=clinic_context,
         canonical_time_context=canonical_time_context,
@@ -251,17 +295,21 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         state_data=state_data,
         faq_result=faq_result,
     )
+    tool_events: list[Dict[str, Any]] = []
     try:
-        raw_llm_output = await dialogue.call_primary_model_with_tool(user_message, context={
+        agent_turn = await dialogue.call_primary_model_with_tool(user_message, context={
             "clinic_id": normalized.get("clinic_id"),
             "conversation_id": normalized.get("conversation_id"),
             "patient_id": normalized.get("patient_id"),
             "state_data": state_data,
             "clinic_context": clinic_context,
+            "persona_context": persona_context,
         })
+        raw_llm_output = str(agent_turn)
+        tool_events = list(getattr(agent_turn, "tool_events", []) or [])
     except Exception:
-        # n8n routed model failures to the error workflow; here the R-layers + policy
-        # render the deterministic PROVIDER_UNAVAILABLE path instead of a raw 500.
+        # The deterministic core still completes safely. The final composer gets the
+        # verified policy/DB facts and can state that information is unavailable.
         logger.exception("primary LLM failed — degrading via MODEL_CALL_FAILED path")
         raw_llm_output = ""
 
@@ -288,7 +336,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         return await _respond_tail(normalized, state_row, state_data, policy, {},
                                    persona_context, {}, extracted_single,
                                    extracted_single, clinic_context, raw_llm_output,
-                                   pre_extracted=extracted_single, faq_result=faq_result)
+                                   pre_extracted=extracted_single, faq_result=faq_result,
+                                   tool_events=tool_events)
     else:
         # [false] → Normalize Agent Output (Deterministic)
         normalized_agent_output = agent_output.normalize_agent_output({
@@ -370,7 +419,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                 normalize_validate=normalized, clinic_context=clinic_context, conversation_state=state_row))
             return await _respond_tail(normalized, state_row, state_data, policy, decision,
                                        persona_context, repaired_result, normalized_agent_output,
-                                       normalized_agent, clinic_context, raw_llm_output)
+                                       normalized_agent, clinic_context, raw_llm_output,
+                                       tool_events=tool_events)
 
         # ── L47-51 P1.6 operation claim ledger ─────────────────────────────────
         claim_input = stages_post.prepare_operation_claim_input(gate_decision, {"normalize_validate": normalized})
@@ -384,7 +434,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                     normalize_validate=normalized, clinic_context=clinic_context, conversation_state=state_row))
                 return await _respond_tail(normalized, state_row, state_data, policy, claim_applied,
                                            persona_context, repaired_result, normalized_agent_output,
-                                           normalized_agent, clinic_context, raw_llm_output)
+                                           normalized_agent, clinic_context, raw_llm_output,
+                                           tool_events=tool_events)
             decision = claim_applied
 
         # ── L52-55 executors ────────────────────────────────────────────────────
@@ -431,7 +482,13 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     return await _respond_tail(normalized, state_row, state_data, policy, decision,
                                persona_context, repaired_result, normalized_agent_output,
                                normalized_agent, clinic_context, raw_llm_output,
-                               faq_result=faq_result)
+                               faq_result=faq_result, tool_events=tool_events,
+                               execution_results={
+                                   "create": exec_create_result,
+                                   "cancel": exec_cancel_result,
+                                   "reschedule": exec_reschedule_result,
+                                   "completion": merge_completion_result,
+                               })
 
 
 async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], state_data: Dict[str, Any],
@@ -440,7 +497,9 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
                         normalized_agent: Dict[str, Any], clinic_context: Optional[Dict[str, Any]] = None,
                         raw_llm_output: Optional[str] = None,
                         pre_extracted: Optional[Dict[str, Any]] = None,
-                        faq_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                        faq_result: Optional[Dict[str, Any]] = None,
+                        tool_events: Optional[list[Dict[str, Any]]] = None,
+                        execution_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Shared tail: persist confirmation → reply guard → reply extraction → audit/usage →
     handoff → state save with stale retry → log outgoing → Respond To Patient."""
     # ── L61 Persist Pending Confirmation (Deterministic) ───────────────────────
@@ -450,40 +509,71 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     # pre-extracted the reply (single-agent result phase): safety is not optional.
     guard = reply_guard.apply_reply_guard({"response_policy": policy})
 
-    if pre_extracted is not None:
-        # Reply already extracted upstream (single-agent result phase) — reuse it to
-        # avoid double extraction, but the guard + persist above still apply.
-        extracted = pre_extracted
-        rendered_reply = (extracted or {}).get("rendered_reply")
-    else:
-        # ── L63-64 Prepare Single Agent Result Context + Extract Single Agent Reply ─
-        prepared = stages_post.prepare_single_agent_result_context(guard, {
-            "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
-            "conversation_state": state_row, "clinic_context": clinic_context or {}, "persona_builder": persona_context,
-            "validate_repaired_contract": repaired_result, "normalize_agent_output": normalized_agent_output})
-        extracted = stages_post.extract_single_agent_reply(prepared, {
-            "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
-            "conversation_state": state_row, "persona_builder": persona_context,
-            "normalize_agent_output": normalized_agent_output, "validate_repaired_contract": repaired_result})
-        rendered_reply = (extracted or {}).get("rendered_reply")
-
-    # ── Grounding Verifier (docs/agent_upgrade_design.md P1.1) ─────────────────
-    rendered_reply, ground_report = grounding.ground_reply(
-        rendered_reply,
-        extracted=extracted,
-        sources={
-            "normalized": normalized,
-            "state": state_data,
-            "clinic": clinic_context or {},
-            "policy": policy,
-            "decision": decision,
-            "repaired": repaired_result,
-            "faq": faq_result or {},
-        },
-        mode=getattr(settings, "GROUNDING_MODE", "enforce"),
+    # ── Dynamic final reply composer ───────────────────────────────────────────
+    # Normal patient-facing prose is authored by the model from an authoritative
+    # fact catalog. No regex, response-code phrase table, or fixed response template
+    # participates in this path. Deterministic policy still owns actions and facts.
+    base_extracted = dict(pre_extracted or normalized_agent_output or normalized_agent or {})
+    reply_context = response_context.build_reply_context(
+        normalized=normalized,
+        clinic_context=clinic_context or {},
+        state_data=state_data,
+        policy=policy,
+        decision=decision,
+        normalized_agent_output=normalized_agent_output,
+        repaired_result=repaired_result,
+        tool_events=tool_events or [],
+        execution_results=execution_results or {},
+        faq_result=faq_result or {},
+        guard=guard,
     )
-    if extracted is not None and rendered_reply:
-        extracted["rendered_reply"] = rendered_reply
+
+    composer_result: Dict[str, Any] = {}
+    composer_error: Optional[str] = None
+    if getattr(settings, "LLM_COMPOSER_ENABLED", True):
+        try:
+            composer_result = await dialogue.compose_patient_reply(reply_context)
+        except Exception as exc:
+            composer_error = str(exc)
+            logger.exception("final response composer failed — using the safest available model/guard reply")
+
+    rendered_reply = str((composer_result or {}).get("reply") or "").strip()
+    if not rendered_reply:
+        guard_override = None
+        if isinstance((guard or {}).get("_reply_guard"), dict):
+            guard_override = (guard.get("_reply_guard") or {}).get("override")
+        rendered_reply = str(
+            guard_override
+            or policy.get("agent_reply")
+            or normalized_agent_output.get("agent_reply")
+            or repaired_result.get("agent_reply")
+            or base_extracted.get("agent_reply")
+            or "تعذر تكوين رد موثوق حاليًا. حاول مرة أخرى بعد قليل."
+        ).strip()
+
+    extracted = {
+        **base_extracted,
+        "agent_reply": rendered_reply,
+        "rendered_reply": rendered_reply,
+        "final_reply": rendered_reply,
+        "canonical_reply": rendered_reply,
+        "render_error": composer_error,
+        "render_used": True,
+        "reply_origin": "model_composer" if composer_result else "safe_fallback",
+        "composer_evidence_ids": (composer_result or {}).get("evidence_ids") or [],
+        "composer_missing_information": (composer_result or {}).get("missing_information") or [],
+    }
+
+    # A successful, evidence-validated composer reply supersedes the legacy guard's
+    # prewritten fallback text. The guard facts/code were already included in the
+    # composer's fact catalog; the override remains available if the composer fails.
+    guard_for_delivery = guard
+    if composer_result and isinstance((guard or {}).get("_reply_guard"), dict):
+        guard_for_delivery = dict(guard)
+        guard_meta = dict(guard.get("_reply_guard") or {})
+        guard_meta["override"] = None
+        guard_meta["superseded_by"] = "model_composer"
+        guard_for_delivery["_reply_guard"] = guard_meta
 
     # ── L65-66 Derive Actions + audit + AI usage ───────────────────────────────
     actions = contract_adapter.derive_actions({
@@ -495,11 +585,20 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "response_policy_deterministic": policy, "normalize_validate": normalized,
         "system_orchestrator_policy": decision})
     audit_entry["normalized"] = normalized
+    audit_entry["reply_composer"] = {
+        "origin": extracted.get("reply_origin"),
+        "evidence_ids": extracted.get("composer_evidence_ids") or [],
+        "missing_information": extracted.get("composer_missing_information") or [],
+        "error": composer_error,
+        "tool_event_count": len(tool_events or []),
+    }
     await repository.log_agent_audit_entry(audit_entry)
     usage_rows = stages_pre.compute_ai_request_usage_deterministic({}, {
         "normalize_validate": normalized,
         "build_clinic_persona_context_deterministic": persona_context,
         "booking_assistant_agent": {"output": raw_llm_output},
+        "result_reply_composer": {"output": (composer_result or {}).get("raw_output") or ""},
+        "prepare_single_agent_result_context": reply_context,
         "response_policy_deterministic": policy})
     for usage_row in (usage_rows or []):
         await repository.insert_ai_request_usage(usage_row)
@@ -530,7 +629,7 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "save_conversation_state": (save_result or {}).get("initial") or {},
         "save_conversation_state_retry_v18": (save_result or {}).get("retry") or {},
         "extract_single_agent_reply": extracted,
-        "response_policy_deterministic": policy, "reply_guard_deterministic": guard})
+        "response_policy_deterministic": policy, "reply_guard_deterministic": guard_for_delivery})
     outgoing_row = await repository.log_outgoing_message(outgoing_params)
 
     # ── L80 Respond To Patient ─────────────────────────────────────────────────
@@ -539,7 +638,7 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         outgoing_message_id=(outgoing_row or {}).get("id"),
         save_initial=(save_result or {}).get("initial") or {},
         save_retry=(save_result or {}).get("retry"),
-        reply_guard_result=guard,
+        reply_guard_result=guard_for_delivery,
         rendered_reply=rendered_reply,
         response_policy_output=policy,
         processed_at_iso=_now_iso(),

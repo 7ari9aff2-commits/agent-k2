@@ -28,6 +28,24 @@ class Settings(BaseSettings):
     LLM_PRIMARY_MODEL: str = "deepseek/deepseek-v4-flash-0731"
     LLM_TEMPERATURE: float = 0.1
     LLM_TIMEOUT_SECONDS: float = 60.0
+    LLM_TOOL_MAX_TURNS: int = 3
+    LLM_TOOL_MAX_CALLS: int = 4
+
+    # Reasoning control. The n8n workflow sent {"reasoning": {"enabled": false}} because its
+    # DeepSeek node understood it. Reasoning models served by other gateways (e.g. Novita's
+    # zai-org/glm-5.3-flash) IGNORE that flag: they still spend the completion budget on
+    # hidden reasoning, and with a small max_tokens the visible content comes back EMPTY
+    # (finish_reason=length). So the parameter is opt-in, and token budgets must cover
+    # reasoning + output.
+    LLM_SEND_REASONING_PARAM: bool = False
+    LLM_REASONING_MAX_TOKENS: int = 2048
+
+    # Final response composer: model-authored prose from an authoritative fact catalog.
+    LLM_COMPOSER_ENABLED: bool = True
+    LLM_COMPOSER_TEMPERATURE: float = 0.35
+    # Must exceed the model's hidden reasoning budget plus the reply, or content returns empty.
+    LLM_COMPOSER_MAX_TOKENS: int = 2000
+    LLM_COMPOSER_MAX_ATTEMPTS: int = 2
 
     # Repair chain model (n8n node: DeepSeek Repair Model, credential: OpenAI account 2)
     LLM_REPAIR_BASE_URL: str = "https://api.openai.com/v1"

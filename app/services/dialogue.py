@@ -3,9 +3,13 @@
 Covers:
   - Booking Assistant Agent user-message assembly (agent_user_message_template.js, byte-faithful
     including the production mojibake fallbacks — kept on purpose for parity).
-  - DeepSeek Model node options: temperature 0.3, max_tokens 4000, response_format json_object,
-    extra body {"reasoning": {"enabled": false, "max_tokens": 2048}}.
-  - DeepSeek Repair Model options: temperature 0, max_tokens 800, reasoning max_tokens 512.
+  - DeepSeek Model node options: temperature 0.3, max_tokens 4000, response_format json_object.
+  - DeepSeek Repair Model options: temperature 0, max_tokens 800.
+  - Reasoning: the n8n node also sent {"reasoning": {"enabled": false, "max_tokens": 2048}}.
+    That is now OPT-IN (LLM_SEND_REASONING_PARAM) because reasoning models served by other
+    gateways (e.g. Novita's zai-org/glm-5.3-flash) ignore the flag and still consume the
+    completion budget on hidden reasoning — with a small max_tokens the visible content
+    comes back empty. See _reasoning_options().
 The R1/R2/R3 safety layers and repair-prompt/validation live in app.core.llm_safety (separate ports)
 and are composed by the pipeline runner, exactly as the n8n graph wires them.
 """
@@ -26,11 +30,46 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 SYSTEM_MESSAGE_PATH = _PROMPTS_DIR / "agent_system_message.txt"
+RESPONSE_COMPOSER_SYSTEM_MESSAGE_PATH = _PROMPTS_DIR / "response_composer_system_message.txt"
 
 
 def load_system_message() -> str:
-    """The exact systemMessage of the n8n Booking Assistant Agent node (8890 chars)."""
+    """System message for the dialogue analyzer and tool-using agent."""
     return SYSTEM_MESSAGE_PATH.read_text(encoding="utf-8")
+
+
+def load_response_composer_system_message() -> str:
+    """Instructions for the model-authored final patient reply."""
+    return RESPONSE_COMPOSER_SYSTEM_MESSAGE_PATH.read_text(encoding="utf-8")
+
+
+def _reasoning_options() -> Dict[str, Any]:
+    """Optional reasoning block — sent only when the provider actually honours it.
+
+    Reasoning models such as zai-org/glm-5.3-flash ignore ``enabled: false`` and still
+    consume the completion budget on hidden reasoning. Sending the block with a small
+    ``max_tokens`` makes the visible ``content`` come back empty, so it is opt-in.
+    """
+    if not getattr(settings, "LLM_SEND_REASONING_PARAM", False):
+        return {}
+    return {"reasoning": {"enabled": False,
+                          "max_tokens": int(getattr(settings, "LLM_REASONING_MAX_TOKENS", 2048))}}
+
+
+def _extract_message_content(message: Dict[str, Any]) -> str:
+    """Visible assistant text, tolerating reasoning-only responses.
+
+    Some gateways return ``content`` plus a separate ``reasoning_content``. When the
+    completion budget is consumed by reasoning the visible content is empty and the
+    finish reason is ``length``; callers must treat that as an empty reply rather than
+    leaking internal reasoning to the patient.
+    """
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "") for part in content if isinstance(part, dict)
+        )
+    return str(content or "")
 
 
 # ── User message assembly (Booking Assistant Agent node `text` expression) ─────
@@ -243,9 +282,14 @@ RECEPTIONIST_TOOLS = [
 
 # ── DeepSeek Model node (primary) ───────────────────────────────────────────────
 async def call_primary_model(user_message: str, tools: Optional[list] = None) -> Any:
-    """Source node: Booking Assistant Agent -> DeepSeek Model (lmChatOpenAi options ported verbatim).
+    """DEPRECATED / UNUSED — the pre-tools single-shot model call.
 
-    Returns the assistant message dict (with content and/or tool_calls)."""
+    Superseded by ``call_primary_model_with_tool``, which is the only agent entry point
+    the pipeline uses. Kept only because it is the documented port of the n8n
+    "DeepSeek Model" node (docs/port_conventions.md). Do NOT wire it back in: it has no
+    reception tools, so it cannot ground availability, catalog, or appointment answers
+    in Supabase data.
+    """
     body: Dict[str, Any] = {
         "model": settings.LLM_PRIMARY_MODEL,
         "messages": [
@@ -254,7 +298,7 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
         ],
         "temperature": 0.3,
         "max_tokens": 4000,
-        "reasoning": {"enabled": False, "max_tokens": 2048},
+        **_reasoning_options(),
     }
     if tools:
         body["tools"] = tools
@@ -270,9 +314,30 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
     return data["choices"][0]["message"]
 
 
-async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any]) -> str:
-    """Agent turn loop: the model may call reception tools (availability, FAQ, catalog, appointments),
-    grounding every fact in Supabase data. Bounded loop."""
+class AgentTurnText(str):
+    """String-compatible agent output carrying the authoritative tool trace.
+
+    Keeping this as a ``str`` preserves the existing LLM safety/contract adapters and
+    external tests while making every Supabase result available to the final composer.
+    """
+
+    tool_events: list[Dict[str, Any]]
+    llm_calls: int
+
+    def __new__(cls, content: str, *, tool_events: Optional[list[Dict[str, Any]]] = None,
+                llm_calls: int = 0) -> "AgentTurnText":
+        obj = str.__new__(cls, content or "")
+        obj.tool_events = list(tool_events or [])
+        obj.llm_calls = int(llm_calls)
+        return obj
+
+
+async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any]) -> AgentTurnText:
+    """Analyze the turn and use reception tools when the request needs real data.
+
+    Returns a string-compatible result plus ``tool_events``. The tool trace is retained
+    for the final response composer instead of disappearing inside the chat loop.
+    """
     from app.services.availability import check_available_slots
     from app.services import faq as faq_service
     from app.db import repository
@@ -282,10 +347,16 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
         {"role": "user", "content": user_message},
     ]
     final_content: Optional[str] = None
-    max_turns = 5
+    tool_events: list[Dict[str, Any]] = []
+    tool_cache: Dict[str, Any] = {}
+    llm_calls = 0
+    total_tool_calls = 0
+    max_turns = max(2, int(getattr(settings, "LLM_TOOL_MAX_TURNS", 3)))
+    max_tool_calls = max(1, int(getattr(settings, "LLM_TOOL_MAX_CALLS", 4)))
     for turn in range(max_turns):
         allow_tools = (turn < max_turns - 1)
         message = await _chat_messages(messages, with_tools=allow_tools, force_json=(not allow_tools))
+        llm_calls += 1
         final_content = message.get("content")
         tool_calls = message.get("tool_calls") or []
         if not tool_calls or not allow_tools:
@@ -298,8 +369,25 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
+            if not isinstance(args, dict):
+                args = {}
 
-            if fn_name == "Check_Doctor_Availability":
+            cache_key = json.dumps(
+                {"name": fn_name, "arguments": args},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            cached = cache_key in tool_cache
+            total_tool_calls += 1
+            if total_tool_calls > max_tool_calls:
+                tool_result = {
+                    "error": "TOOL_CALL_LIMIT_REACHED",
+                    "message": "No additional tools may run in this turn",
+                }
+            elif cached:
+                tool_result = tool_cache[cache_key]
+            elif fn_name == "Check_Doctor_Availability":
                 # Resolve doctor_id with fallback to context/state/clinic
                 doctor_id = args.get("doctor_id") or context.get("doctor_id")
                 if not doctor_id:
@@ -366,12 +454,20 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
             else:
                 tool_result = {"error": "UNKNOWN_TOOL"}
 
+            if not cached and total_tool_calls <= max_tool_calls:
+                tool_cache[cache_key] = tool_result
+            tool_events.append({
+                "name": fn_name,
+                "arguments": args,
+                "result": tool_result,
+                "cache_hit": cached,
+            })
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.get("id"),
                 "content": json.dumps(tool_result, ensure_ascii=False),
             })
-    return final_content or ""
+    return AgentTurnText(final_content or "", tool_events=tool_events, llm_calls=llm_calls)
 
 
 async def _chat_messages(messages: list, *, with_tools: bool = True, force_json: bool = False) -> Any:
@@ -386,7 +482,7 @@ async def _chat_messages(messages: list, *, with_tools: bool = True, force_json:
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 4000,
-        "reasoning": {"enabled": False, "max_tokens": 2048},
+        **_reasoning_options(),
     }
     if with_tools:
         body["tools"] = RECEPTIONIST_TOOLS
@@ -403,6 +499,72 @@ async def _chat_messages(messages: list, *, with_tools: bool = True, force_json:
     return data["choices"][0]["message"]
 
 
+async def compose_patient_reply(reply_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Ask the model to write the final patient reply from authoritative facts only.
+
+    The model receives no reply template and no response-code phrase table. It receives
+    a compact fact catalog, analyzes it, writes a natural Arabic response, and cites the
+    fact IDs it used. The structured evidence contract is validated without regex.
+    """
+    from app.core.response_context import validate_composer_output
+
+    messages: list[Dict[str, Any]] = [
+        {"role": "system", "content": load_response_composer_system_message()},
+        {
+            "role": "user",
+            "content": json.dumps(reply_context, ensure_ascii=False, separators=(",", ":"), default=str),
+        },
+    ]
+    max_attempts = max(1, int(getattr(settings, "LLM_COMPOSER_MAX_ATTEMPTS", 2)))
+    validation_errors: list[str] = []
+
+    for attempt in range(1, max_attempts + 1):
+        body: Dict[str, Any] = {
+            "model": settings.LLM_PRIMARY_MODEL,
+            "messages": messages,
+            "temperature": float(getattr(settings, "LLM_COMPOSER_TEMPERATURE", 0.35)),
+            "max_tokens": int(getattr(settings, "LLM_COMPOSER_MAX_TOKENS", 2000)),
+            "response_format": {"type": "json_object"},
+            **_reasoning_options(),
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.LLM_PRIMARY_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{settings.LLM_PRIMARY_BASE_URL.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=body,
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"response composer HTTP {resp.status_code}: {resp.text[:300]}")
+
+        data = resp.json()
+        raw = str((((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or "")
+        parsed, validation_errors = validate_composer_output(raw, reply_context)
+        if parsed is not None:
+            parsed["raw_output"] = raw
+            parsed["attempts"] = attempt
+            parsed["usage"] = data.get("usage") or {}
+            parsed["input_chars"] = len(messages[1]["content"])
+            return parsed
+
+        messages.extend([
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "instruction": "صحح المخرج السابق فقط. لا تضف حقائق جديدة.",
+                    "validation_errors": validation_errors,
+                    "valid_fact_ids": reply_context.get("fact_ids") or [],
+                }, ensure_ascii=False, separators=(",", ":")),
+            },
+        ])
+
+    raise ValueError("response composer contract invalid: " + ",".join(validation_errors))
+
+
 # ── DeepSeek Repair Chain (chainLlm + DeepSeek Repair Model) ────────────────────
 async def call_repair_model(prompt: str) -> str:
     """Source node: DeepSeek Repair Chain (text = $json.prompt) + DeepSeek Repair Model options."""
@@ -411,7 +573,7 @@ async def call_repair_model(prompt: str) -> str:
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": 800,
-        "reasoning": {"enabled": False, "max_tokens": 512},
+        **_reasoning_options(),
     }
     headers = {"Authorization": f"Bearer {settings.LLM_REPAIR_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:

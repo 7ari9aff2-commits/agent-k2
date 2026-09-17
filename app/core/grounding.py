@@ -1,8 +1,20 @@
 """Grounding verifier — deterministic entity-subset check for LLM-authored replies.
 
-Not an n8n port: this is a NEW layer (docs/agent_upgrade_design.md, P1.1) implementing
-the "never says anything that isn't in the data" guarantee for free-text replies.
-Deterministic template renders are skipped (fact-safe by construction).
+SUPERSEDED 2026-09-17 — NOT IMPORTED BY THE RUNNING PIPELINE.
+
+The final patient reply is now authored by ``dialogue.compose_patient_reply`` from an
+authoritative fact catalog and validated by ``response_context.validate_composer_output``
+(structural evidence-ID contract). This module's regex entity matcher is no longer on
+the live path.
+
+It also contained a real defect: the caller set ``render_used = bool(reply)`` — meaning
+"a reply exists", not "a deterministic template rendered it" — so the
+``extract_single_agent_reply`` skip below fired on every turn and the check never ran.
+See ``docs/agent_review_2026-09-17.md`` (P0-1).
+
+Kept for reference and for ``tests/test_grounding.py``. Decide whether to delete it or
+re-purpose it as a second structural check — do not re-wire it without fixing the
+``render_used`` semantics first.
 
 Rule: every concrete entity in the reply — doctor names (after د./دكتور), clock times
 (HH:MM or الساعة N), ISO dates — must appear in the turn's context whitelist built from
