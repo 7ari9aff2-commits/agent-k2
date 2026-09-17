@@ -64,6 +64,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _first_not_none, js_or as _js_or
+from app.core.js_semantics import truthy as _truthy
 
 
 class ResponsePolicyCtx(TypedDict, total=False):
@@ -89,15 +90,6 @@ class ResponsePolicyCtx(TypedDict, total=False):
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
-
-
-def _truthy(value):
-    """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
-    if isinstance(value, float) and math.isnan(value):
-        return False
-    if isinstance(value, (dict, list)):
-        return True
-    return bool(value)
 
 
 def _js_string(value):

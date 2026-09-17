@@ -71,6 +71,7 @@ import re
 import time
 from datetime import datetime, timezone
 from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _first_not_none, iso_from_ms as _iso_from_ms, js_is_integer as _js_is_integer, js_or as _js_or
+from app.core.js_semantics import truthy as _truthy
 
 try:
     from zoneinfo import ZoneInfo
@@ -1263,15 +1264,6 @@ def _decide_state_table(inp, now_ts=None):
 
 
 # ── JS semantics shims (String() / Number() / truthiness / || / Date.parse) ──
-
-
-def _truthy(value):
-    """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
-    if isinstance(value, float) and math.isnan(value):
-        return False
-    if isinstance(value, (dict, list)):
-        return True
-    return bool(value)
 
 
 def _js_string(value):
