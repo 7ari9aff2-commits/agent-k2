@@ -213,7 +213,7 @@ def apply_reply_guard(inputs: dict) -> dict:
         override = (
             _js_cat('تم إلغاء حجزك بنجاح يا ', name)
             + (_js_cat('\nرقم الحجز: ', booking_number) if _truthy(booking_number) else '')
-            + '\nنشوفك في زيجة قريبة'
+            + '\nنشوفك في زيارة قريبة، ونتمنى لك دوام الصحة والعافية'
         )
     elif code == 'RESCHEDULE_COMPLETED':
         override = (
@@ -223,6 +223,8 @@ def apply_reply_guard(inputs: dict) -> dict:
         )
     elif code == 'IDEMPOTENT_REPLAY':
         override = 'حجزك متسجل بالفعل ومتفعّل ✅' + (_js_cat('\nرقم الحجز: ', booking_number) if _truthy(booking_number) else '')
+    elif code == 'CONFIRMATION_EXPIRED':
+        override = 'الموعد المعلق انتهت صلاحية حجزه المؤقت. تحب نتحقق من المواعيد المتاحة ونحجز من جديد؟'
 
     if not override:
         return item

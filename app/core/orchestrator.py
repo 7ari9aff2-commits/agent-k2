@@ -354,12 +354,12 @@ def patient_fields_from(state, contract):
 
 
 def patient_data_complete(fields, appointment_type):
-    """Source node: System Orchestrator (Policy) — patientDataComplete helper."""
+    """Source node: System Orchestrator (Policy) — patientDataComplete helper.
+    Outpatient clinical policy: patient_name and patient_phone are the essential required identity fields.
+    """
     fields = _dict(fields)
-    age = fields.get('patient_age')
     return bool(fields.get('patient_name') and fields.get('patient_phone')
-        and age is not None and str(age).strip() != ''
-        and fields.get('patient_address') and str(_js_or(appointment_type, '')))
+        and str(_js_or(appointment_type, '')))
 
 
 # ── Legacy shim: map pre-v3 persisted state to a v3 state ──
@@ -505,7 +505,7 @@ def directive_for(row_id, ctx):
     elif row_id == 'ask_visit_type':
         d['must_ask'] = ['visit_type']
     elif row_id == 'collect_patient_data':
-        d['must_ask'] = _js_or(ctx.get('missingPatientFields'), ['patient_name', 'patient_age', 'patient_phone', 'patient_address'])
+        d['must_ask'] = _js_or(ctx.get('missingPatientFields'), ['patient_name', 'patient_phone'])
     elif row_id == 'confirm_patient_data':
         d['must_show_review'] = _js_or(ctx.get('reviewFields'), None)
     elif row_id == 'ask_date':
@@ -564,12 +564,8 @@ def missing_patient_fields(state_like, contract):
     missing = []
     if not f.get('patient_name'):
         missing.append('patient_name')
-    if f.get('patient_age') is None:
-        missing.append('patient_age')
     if not f.get('patient_phone'):
         missing.append('patient_phone')
-    if not f.get('patient_address'):
-        missing.append('patient_address')
     return missing
 
 
@@ -765,11 +761,19 @@ def _decide_state_table(inp, now_ts=None):
                 target = build_create_target(inp, slot, 'exact_verified', now_ts)
                 if target_binding_valid(target, state, clinic, now_ts):
                     patches['confirmation_target'] = target
+                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
+                    if not complete:
+                        missing = missing_patient_fields(state, contract)
+                        patches['turn_directive'] = directive_for('collect_patient_data', {
+                            'missingPatientFields': missing, 'lockedFields': locked_fields_of(patches, contract)})
+                        return finish('slot_verified_need_patient_data', STATES['COLLECT_PATIENT_DATA'],
+                                      'MISSING_REQUIRED_FIELDS', {'missing_fields': missing,
+                                                                   'patient_data_complete': False,
+                                                                   'patient_data_gate_satisfied': False})
                     patches['turn_directive'] = directive_for('propose_confirm', {
                         'confirmFacts': {'doctor_name': target.get('doctor_name'), 'date': target.get('date'),
                                          'time': target.get('time'), 'appointment_type': target.get('appointment_type')},
                         'lockedFields': locked_fields_of(state, contract)})
-                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
                     return finish('selection_bound_verified', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
                                   {'confirmation_state': 'proposed', 'patient_data_complete': complete,
                                    'patient_data_gate_satisfied': complete})
@@ -809,8 +813,13 @@ def _decide_state_table(inp, now_ts=None):
     if cls == 'cancel_request' or cls == 'reschedule_request':
         facts_root = state.get('facts')
         booking_facts = _dict(_dict(facts_root).get('booking') if isinstance(facts_root, dict) else None)
-        appt_id = _js_or(_dict(contract.get('entities')).get('appointment_id'), state.get('appointment_id'),
-                         booking_facts.get('appointment_id'), None)
+        appt_id = _js_or(_dict(contract.get('entities')).get('appointment_id'),
+                         resolved.get('appointment_id'),
+                         state.get('appointment_id'),
+                         booking_facts.get('appointment_id'),
+                         _dict(state.get('booking_context')).get('appointment_id'),
+                         _dict(state.get('slot_state')).get('appointment_id'),
+                         None)
         if not uuid_valid(appt_id):
             return finish('cancel_need_appointment' if cls == 'cancel_request' else 'reschedule_need_appointment',
                           cs, 'MISSING_REQUIRED_FIELDS', {'missing_fields': ['appointment_id']})
@@ -892,11 +901,19 @@ def _decide_state_table(inp, now_ts=None):
                 target = build_create_target(inp, alt, 'offered_alternative', now_ts)
                 if target_binding_valid(target, state, clinic, now_ts):
                     patches['confirmation_target'] = target
+                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
+                    if not complete:
+                        missing = missing_patient_fields(state, contract)
+                        patches['turn_directive'] = directive_for('collect_patient_data', {
+                            'missingPatientFields': missing, 'lockedFields': locked_fields_of(patches, contract)})
+                        return finish('offer_affirm_need_patient_data', STATES['COLLECT_PATIENT_DATA'],
+                                      'MISSING_REQUIRED_FIELDS', {'missing_fields': missing,
+                                                                   'patient_data_complete': False,
+                                                                   'patient_data_gate_satisfied': False})
                     patches['turn_directive'] = directive_for('propose_confirm', {
                         'confirmFacts': {'doctor_name': target.get('doctor_name'), 'date': target.get('date'),
                                          'time': target.get('time'), 'appointment_type': target.get('appointment_type')},
                         'lockedFields': locked_fields_of(state, contract)})
-                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
                     return finish('selection_bound_from_offer', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
                                   {'confirmation_state': 'proposed', 'patient_data_complete': complete,
                                    'patient_data_gate_satisfied': complete})
@@ -1032,6 +1049,14 @@ def _decide_state_table(inp, now_ts=None):
     if cs == STATES['COLLECT_PATIENT_DATA']:
         missing = missing_patient_fields(patches, contract)
         if not missing:
+            if _truthy(prior_target) and prior_target.get('action') == 'create_appointment' \
+                    and target_binding_valid(prior_target, state, clinic, now_ts):
+                patches['turn_directive'] = directive_for('propose_confirm', {
+                    'confirmFacts': {'doctor_name': prior_target.get('doctor_name'), 'date': prior_target.get('date'),
+                                     'time': prior_target.get('time'), 'appointment_type': prior_target.get('appointment_type')},
+                    'lockedFields': locked_fields_of(patches, contract)})
+                return finish('collect_complete_slot_bound_propose', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
+                              {'confirmation_state': 'proposed', 'patient_data_complete': True, 'patient_data_gate_satisfied': True})
             patches['patient_data_review'] = review_from(patches, 'collected')
             patches['turn_directive'] = directive_for('confirm_patient_data', {
                 'reviewFields': patches['patient_data_review']['fields'],
@@ -1091,11 +1116,19 @@ def _decide_state_table(inp, now_ts=None):
             bridge_target = build_create_target(inp, bridge_alt, 'offered_alternative', now_ts)
             if target_binding_valid(bridge_target, state, clinic, now_ts):
                 patches['confirmation_target'] = bridge_target
+                bridge_complete = patient_data_complete(patient_fields_from(state, contract), bridge_target.get('appointment_type'))
+                if not bridge_complete:
+                    missing = missing_patient_fields(state, contract)
+                    patches['turn_directive'] = directive_for('collect_patient_data', {
+                        'missingPatientFields': missing, 'lockedFields': locked_fields_of(patches, contract)})
+                    return finish('selection_bound_from_offer_bridge_need_data', STATES['COLLECT_PATIENT_DATA'],
+                                  'MISSING_REQUIRED_FIELDS', {'missing_fields': missing,
+                                                               'patient_data_complete': False,
+                                                               'patient_data_gate_satisfied': False})
                 patches['turn_directive'] = directive_for('propose_confirm', {
                     'confirmFacts': {'doctor_name': bridge_target.get('doctor_name'), 'date': bridge_target.get('date'),
                                      'time': bridge_target.get('time'), 'appointment_type': bridge_target.get('appointment_type')},
                     'lockedFields': locked_fields_of(state, contract)})
-                bridge_complete = patient_data_complete(patient_fields_from(state, contract), bridge_target.get('appointment_type'))
                 return finish('selection_bound_from_offer_bridge', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
                               {'confirmation_state': 'proposed', 'patient_data_complete': bridge_complete,
                                'patient_data_gate_satisfied': bridge_complete})
@@ -1122,11 +1155,19 @@ def _decide_state_table(inp, now_ts=None):
                 target = build_create_target(inp, alt, 'offered_alternative', now_ts)
                 if target_binding_valid(target, state, clinic, now_ts):
                     patches['confirmation_target'] = target
+                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
+                    if not complete:
+                        missing = missing_patient_fields(state, contract)
+                        patches['turn_directive'] = directive_for('collect_patient_data', {
+                            'missingPatientFields': missing, 'lockedFields': locked_fields_of(patches, contract)})
+                        return finish('selection_bound_from_offer_need_data', STATES['COLLECT_PATIENT_DATA'],
+                                      'MISSING_REQUIRED_FIELDS', {'missing_fields': missing,
+                                                                   'patient_data_complete': False,
+                                                                   'patient_data_gate_satisfied': False})
                     patches['turn_directive'] = directive_for('propose_confirm', {
                         'confirmFacts': {'doctor_name': target.get('doctor_name'), 'date': target.get('date'),
                                          'time': target.get('time'), 'appointment_type': target.get('appointment_type')},
                         'lockedFields': locked_fields_of(state, contract)})
-                    complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
                     return finish('selection_bound_from_offer', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
                                   {'confirmation_state': 'proposed', 'patient_data_complete': complete,
                                    'patient_data_gate_satisfied': complete})
@@ -1156,12 +1197,29 @@ def _decide_state_table(inp, now_ts=None):
             first_alt = offer['alternatives'][0]
             if isinstance(first_alt, dict):
                 offer_first_date = str(_js_or(first_alt.get('local_date'), first_alt.get('date'), ''))[:10]
-        offer_contradicted = bool(_truthy(offer) and ent_date_given and offer_first_date
-                                  and offer_first_date != ent_date_given)
-        target_contradicted = bool(_truthy(prior_target) and (
+        cur_doc_id = patches['booking_context'].get('doctor_id') or resolved.get('doctor_id')
+        cur_doc_name = patches['booking_context'].get('doctor_name') or ent.get('doctor_name')
+        offer_doc_id = _dict(offer).get('doctor_id') if _truthy(offer) else None
+        offer_doc_name = _dict(offer).get('doctor_name') if _truthy(offer) else None
+        target_doc_id = _dict(prior_target).get('doctor_id') if _truthy(prior_target) else None
+        target_doc_name = _dict(prior_target).get('doctor_name') if _truthy(prior_target) else None
+
+        doctor_switched_offer = bool(_truthy(offer) and (
+            (cur_doc_id and offer_doc_id and str(cur_doc_id) != str(offer_doc_id))
+            or (cur_doc_name and offer_doc_name and str(cur_doc_name).strip() != str(offer_doc_name).strip())
+        ))
+        doctor_switched_target = bool(_truthy(prior_target) and (
+            (cur_doc_id and target_doc_id and str(cur_doc_id) != str(target_doc_id))
+            or (cur_doc_name and target_doc_name and str(cur_doc_name).strip() != str(target_doc_name).strip())
+        ))
+
+        offer_contradicted = bool((_truthy(offer) and ent_date_given and offer_first_date
+                                  and offer_first_date != ent_date_given) or doctor_switched_offer)
+        target_contradicted = bool((_truthy(prior_target) and (
             (_dict(prior_target).get('date') and str(_dict(prior_target).get('date')) != str(known_date_iso))
             or (_dict(prior_target).get('time') and patches['booking_context'].get('time')
                 and normalize_time(_dict(prior_target).get('time')) != normalize_time(patches['booking_context'].get('time')))))
+            or doctor_switched_target)
         if offer_contradicted or target_contradicted:
             # The patient steered to a different day/time this turn — the pending offer /
             # confirmation target is stale and must not be re-presented or executed.

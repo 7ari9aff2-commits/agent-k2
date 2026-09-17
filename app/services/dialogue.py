@@ -11,10 +11,12 @@ and are composed by the pipeline runner, exactly as the n8n graph wires them.
 """
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -49,13 +51,13 @@ def build_user_message(
 
     persona = {
         "clinic": c.get("clinic_name") or "",
-        "assistant": (c.get("persona") or {}).get("name") or "┘å┘ê╪▒",  # production mojibake, kept for parity
-        "role": (c.get("persona") or {}).get("role") or "┘à╪│╪º╪╣╪»╪⌐ ╪º╪│╪¬┘é╪¿╪º┘ä ┘ê╪¡╪¼┘ê╪▓╪º╪¬",  # kept for parity
+        "assistant": (c.get("persona") or {}).get("name") or "نور",
+        "role": (c.get("persona") or {}).get("role") or "مساعدة استقبال وحجوزات",
         "tone": (c.get("persona") or {}).get("tone") or "warm_professional",
         "dialect": (c.get("persona") or {}).get("dialect") or "saudi",
     }
     faq = faq_result if (faq_result and len(faq_result) > 0) else None
-    include_faq_facts = b.get("agent_prompt_profile") == "clinic_query" and bool(faq) and isinstance(faq.get("results"), list) and len(faq["results"]) > 0
+    include_faq_facts = bool(faq) and isinstance(faq.get("results"), list) and len(faq["results"]) > 0
     service = b.get("service_facts") or {}
     # Computed in the source template but never placed into the payload — kept for fidelity.
     include_service = service.get("is_service_fact_inquiry") is True or service.get("is_price_inquiry") is True or service.get("is_service_catalog_inquiry") is True  # noqa: F841
@@ -87,21 +89,36 @@ def build_user_message(
             order = ["date", "time", "reference", "patient_name", "patient_phone", "patient_age", "patient_address"]
             next_ask = next((f for f in order if f in missing), missing[0])
 
+    local_tz_str = t.get("timezone")
+    local_date = t.get("now_local_date")
+    local_time = t.get("now_local_time")
+    now_iso = t.get("now_iso")
+    if (not local_date or not local_time) and now_iso and local_tz_str:
+        try:
+            dt = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+            local_dt = dt.astimezone(ZoneInfo(str(local_tz_str)))
+            if not local_date:
+                local_date = local_dt.strftime("%Y-%m-%d")
+            if not local_time:
+                local_time = local_dt.strftime("%H:%M:%S")
+        except Exception:
+            pass
+
     payload = {
         "assistant_persona": persona,
         "clinic_name": c.get("clinic_name") or None,
         "context": {
             "clinic_name": c.get("clinic_name") or None,
             "local_time": {
-                "timezone": t.get("timezone") or None,
-                "date": t.get("now_local_date") or None,
-                "time": t.get("now_local_time") or None,
+                "timezone": local_tz_str or None,
+                "date": local_date or None,
+                "time": local_time or None,
                 "offset": t.get("utc_offset") or None,
             },
             "doctors": {"count": c.get("doctor_count") or 0, "directory": b.get("clinic_doctor_directory") or []},
         },
         "situation": {
-            "today": t.get("now_local_date") or None,
+            "today": local_date or None,
             "current_booking": ({"doctor_name": bc.get("doctor_name") or None, "doctor_id": bc.get("doctor_id") or None,
                                  "date": bc.get("date") or None, "time": bc.get("time") or None}
                                 if (bc.get("doctor_name") or bc.get("doctor_id") or bc.get("date")) else None),
@@ -144,12 +161,20 @@ AVAILABILITY_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "doctor_id": {"type": "string",
-                              "description": "Doctor name exactly as the patient wrote it, or a doctor id already known"},
-                "requested_date": {"type": "string",
-                                   "description": "ISO YYYY-MM-DD date in the clinic local calendar"},
+                "doctor_id": {
+                    "type": "string",
+                    "description": "Doctor name exactly as the patient wrote it, or a doctor id already known",
+                },
+                "requested_date": {
+                    "type": "string",
+                    "description": "ISO YYYY-MM-DD date in the clinic local calendar",
+                },
+                "service_id": {
+                    "type": "string",
+                    "description": "Service UUID if known, or null",
+                },
             },
-            "required": [],
+            "required": ["doctor_id", "requested_date"],
         },
     },
 }
@@ -160,7 +185,7 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
     """Source node: Booking Assistant Agent -> DeepSeek Model (lmChatOpenAi options ported verbatim).
 
     Returns the assistant message dict (with content and/or tool_calls)."""
-    body = {
+    body: Dict[str, Any] = {
         "model": settings.LLM_PRIMARY_MODEL,
         "messages": [
             {"role": "system", "content": load_system_message()},
@@ -168,12 +193,13 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
         ],
         "temperature": 0.3,
         "max_tokens": 4000,
-        "response_format": {"type": "json_object"},
         "reasoning": {"enabled": False, "max_tokens": 2048},
     }
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
+    else:
+        body["response_format"] = {"type": "json_object"}
     headers = {"Authorization": f"Bearer {settings.LLM_PRIMARY_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
         resp = await client.post(f"{settings.LLM_PRIMARY_BASE_URL.rstrip('/')}/chat/completions", headers=headers, json=body)
@@ -193,11 +219,13 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
         {"role": "user", "content": user_message},
     ]
     final_content: Optional[str] = None
-    for _turn in range(5):
-        message = await _chat_messages(messages)
+    max_turns = 5
+    for turn in range(max_turns):
+        allow_tools = (turn < max_turns - 1)
+        message = await _chat_messages(messages, with_tools=allow_tools, force_json=(not allow_tools))
         final_content = message.get("content")
         tool_calls = message.get("tool_calls") or []
-        if not tool_calls:
+        if not tool_calls or not allow_tools:
             break
         messages.append(message)
         for tool_call in tool_calls:
@@ -209,34 +237,68 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                tool_input = {
-                    "clinic_id": context.get("clinic_id"),
-                    "conversation_id": context.get("conversation_id"),
-                    "patient_id": context.get("patient_id"),
-                    "doctor_id": args.get("doctor_id"),
-                    "requested_date": args.get("requested_date"),
-                }
-                try:
-                    tool_result = await check_available_slots(tool_input)
-                except Exception as exc:  # the subworkflow's RPC error item
-                    tool_result = {"error": str(exc)}
-            messages.append({"role": "tool", "tool_call_id": tool_call.get("id"),
-                             "content": json.dumps(tool_result, ensure_ascii=False)})
+
+                # Resolve doctor_id with fallback to context/state/clinic
+                doctor_id = args.get("doctor_id") or context.get("doctor_id")
+                if not doctor_id:
+                    st = context.get("state_data") or {}
+                    bc = st.get("booking_context") or {}
+                    doctor_id = bc.get("doctor_id") or (context.get("clinic_context") or {}).get("single_doctor_id")
+
+                requested_date = args.get("requested_date")
+                service_id = args.get("service_id") or context.get("service_id")
+                if not service_id:
+                    st = context.get("state_data") or {}
+                    bc = st.get("booking_context") or {}
+                    service_id = bc.get("service_id")
+
+                if not doctor_id or not requested_date:
+                    tool_result = {
+                        "error": "MISSING_REQUIRED_PARAMS",
+                        "message": "doctor_id and requested_date are required for availability check",
+                    }
+                else:
+                    tool_input = {
+                        "clinic_id": context.get("clinic_id"),
+                        "conversation_id": context.get("conversation_id"),
+                        "patient_id": context.get("patient_id"),
+                        "doctor_id": doctor_id,
+                        "requested_date": requested_date,
+                        "service_id": service_id,
+                    }
+                    try:
+                        tool_result = await check_available_slots(tool_input)
+                    except Exception as exc:  # the subworkflow's RPC error item
+                        tool_result = {"error": str(exc)}
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "content": json.dumps(tool_result, ensure_ascii=False),
+            })
     return final_content or ""
 
 
-async def _chat_messages(messages: list) -> Any:
-    """Continuation call with accumulated messages (same model options, tools attached)."""
-    body = {
+async def _chat_messages(messages: list, *, with_tools: bool = True, force_json: bool = False) -> Any:
+    """Continuation call with accumulated messages (same model options).
+    
+    When with_tools is True: tools are attached and response_format json_object is omitted
+    to avoid conflicts on OpenAI/DeepSeek endpoints during function calling turns.
+    When with_tools is False: response_format is set to json_object to guarantee structured JSON output.
+    """
+    body: Dict[str, Any] = {
         "model": settings.LLM_PRIMARY_MODEL,
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 4000,
-        "response_format": {"type": "json_object"},
         "reasoning": {"enabled": False, "max_tokens": 2048},
-        "tools": [AVAILABILITY_TOOL],
-        "tool_choice": "auto",
     }
+    if with_tools:
+        body["tools"] = [AVAILABILITY_TOOL]
+        body["tool_choice"] = "auto"
+    if force_json or not with_tools:
+        body["response_format"] = {"type": "json_object"}
+
     headers = {"Authorization": f"Bearer {settings.LLM_PRIMARY_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
         resp = await client.post(f"{settings.LLM_PRIMARY_BASE_URL.rstrip('/')}/chat/completions", headers=headers, json=body)

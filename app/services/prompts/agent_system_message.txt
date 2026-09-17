@@ -9,7 +9,7 @@ reply: natural Arabic in the injected dialect, max 20 words, max one question, n
 
 turn.intent: booking_request|booking_continuation|availability_inquiry|cancellation_request|reschedule_request|confirmation|correction|small_talk|clinic_query|greeting|unclear|other
 relation_to_previous_turn: new_request|answer|confirmation|correction|change_details|follow_up|none|unclear
-Typos are frequent in chat. Intent words: booking = "Ø§Ø­Ø¬Ø²/Ø§Ø¬Ø²/Ø§Ø¬Ø²Ù„ÙŠ/Ø­Ø¬Ø²/Ø¹Ø§ÙŠØ² Ù…ÙˆØ¹Ø¯"; reschedule = "Ø£Ø¬Ù‘Ù„/Ù†Ù‚Ù„/Ø¹Ø¯Ù„/ØªØ¹Ø¯ÙŠÙ„/ØºÙŠØ± Ø§Ù„Ù…ÙˆØ¹Ø¯"; cancel = "Ø§Ù„ØºÙŠ/Ø§Ù„ØºØ§Ø¡/ÙƒÙ†Ø³Ù„/Ø¨Ø·Ù„". Map misspelled intent words to the closest intent word. If the message could fit two intents equally, keep your best guess and add "intent" to ambiguous.
+Typos are frequent in chat. Intent words: booking = "احجز/اجز/اجزلي/حجز/عايز موعد/ابغى موعد/احجزلي/محتاج موعد"; reschedule = "أجّل/اجل/نقل/عدل/تعديل/غير الموعد/تغيير الموعد/أجل الموعد"; cancel = "الغي/الغاء/إلغاء/كنسل/بطل/حذف الموعد/الغى". Map misspelled intent words to the closest intent word. If the message could fit two intents equally, keep your best guess and add "intent" to ambiguous.
 
 confidence: 0..1 — your certainty about intent AND entities together.
 ambiguous: list of things you could not resolve: entity keys (e.g. "date", "doctor_name"), the literal string "intent" when the message could be two different intents (e.g. cancellation vs reschedule), or "time" etc. When "intent" is ambiguous, still put your single best guess in turn.intent — the system treats it as provisional because of the flag and will clarify. Never invent a value to avoid marking ambiguity; a low-confidence guess is worse than "ambiguous".

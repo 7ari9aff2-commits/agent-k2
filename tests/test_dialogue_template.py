@@ -1,7 +1,8 @@
 """Parity tests for the Booking Assistant Agent user-message template port.
 
-Mirrors agent_user_message_template.js branch by branch, including the
-production mojibake persona fallbacks (kept intentionally).
+Mirrors agent_user_message_template.js branch by branch.
+Persona fallbacks use correct UTF-8 Arabic strings after mojibake fix.
+FAQ facts are injected whenever results are available, regardless of prompt profile.
 """
 from app.services.dialogue import build_user_message, parse_contract_json
 
@@ -17,9 +18,10 @@ def time_ctx():
     return {"timezone": "Asia/Riyadh", "now_local_date": "2026-09-16", "now_local_time": "18:00", "utc_offset": "+03:00"}
 
 
-def test_persona_mojibake_fallbacks_kept():
+def test_persona_arabic_fallbacks_correct():
+    """Persona fallback values must be proper UTF-8 Arabic (mojibake was a bug, now fixed)."""
     msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "مرحبا"}, {}, {}, None)
-    assert "┘å┘ê╪▒" in msg and "┘à╪│╪º╪╣╪»╪⌐ ╪º╪│╪¬┘é╪¿╪º┘ä ┘ê╪¡╪¼┘ê╪▓╪º╪¬" in msg  # production quirk preserved
+    assert '"assistant": "نور"' in msg and '"role": "مساعدة استقبال وحجوزات"' in msg
 
 
 def test_persona_values_used_when_present():
@@ -28,13 +30,20 @@ def test_persona_values_used_when_present():
     assert '"assistant": "سارة"' in msg and '"dialect": "egyptian"' in msg
 
 
-def test_faq_included_only_for_clinic_query_profile_with_results():
+def test_faq_injected_whenever_results_available():
+    """FAQ facts must always be injected when results exist, regardless of prompt profile.
+    The old profile-gate (clinic_query only) was a logic bug — fixed.
+    """
     faq = {"clinic_id": CLINIC, "results": [{"answer": "aa"}], "count": 1}
+    # clinic_query profile: FAQ included
     msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "x"}, {"agent_prompt_profile": "clinic_query"}, {}, faq)
     assert '"faq_facts"' in msg and "aa" in msg
-    # wrong profile -> null faq_facts
+    # booking profile: FAQ still included (profile gate was wrong)
     msg2 = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "x"}, {"agent_prompt_profile": "booking"}, {}, faq)
-    assert '"faq_facts": null' in msg2
+    assert '"faq_facts"' in msg2 and "aa" in msg2
+    # no results -> null faq_facts regardless of profile
+    msg3 = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "x"}, {"agent_prompt_profile": "clinic_query"}, {}, None)
+    assert '"faq_facts": null' in msg3
 
 
 def test_next_ask_visit_type_when_collecting_without_type():
