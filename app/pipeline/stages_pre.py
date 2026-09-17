@@ -2505,7 +2505,7 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
 # Build Audit Entry
 # ---------------------------------------------------------------------------
 
-_AUDIT_KNOWN_MODEL = "deepseek/deepseek-v3.2"
+_AUDIT_KNOWN_MODEL_FALLBACK = "deepseek/deepseek-v3.2"
 _AUDIT_BOOKING_VOCAB_RE = _js_re(r"حجز|موعد|دكتور|book")
 _GENERIC_ERROR_REPLY_RE = _js_re(r"تعذر صياغة الرد")
 _WEAK_LABELS = ("unclear", "other", "small_talk", "clarification")
@@ -2587,7 +2587,7 @@ def build_audit_entry(item: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str,
         _prop(final_item, "model"), _prop(final_item, "model_name"), _prop(final_item, "model_id"),
         _prop(response_item, "model"), _prop(agent_output, "model"), _prop(agent_output, "model_name"), "",
     )))
-    runtime_model = runtime_model_raw or _AUDIT_KNOWN_MODEL
+    runtime_model = runtime_model_raw or _configured_model(_AUDIT_KNOWN_MODEL_FALLBACK)
 
     # understanding-failure telemetry (zero-token flywheel).
     st_state = _first_truthy(_prop(_dict_or(inputs.get("get_conversation_state")), "state_data"), {})

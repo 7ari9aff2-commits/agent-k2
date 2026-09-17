@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # reasoning + output.
     LLM_SEND_REASONING_PARAM: bool = False
     LLM_REASONING_MAX_TOKENS: int = 2048
+    # No flag disables thinking on zai-org/glm-5.3-flash, but reasoning_effort does throttle
+    # it: measured on Novita, "low" cut reasoning tokens from 283 to 83 and call latency
+    # from 7.7s to 5.4s. Empty string omits the parameter entirely.
+    LLM_REASONING_EFFORT: str = "low"
 
     # Final response composer: model-authored prose from an authoritative fact catalog.
     LLM_COMPOSER_ENABLED: bool = True

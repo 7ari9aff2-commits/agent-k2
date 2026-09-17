@@ -43,17 +43,29 @@ def load_response_composer_system_message() -> str:
     return RESPONSE_COMPOSER_SYSTEM_MESSAGE_PATH.read_text(encoding="utf-8")
 
 
-def _reasoning_options() -> Dict[str, Any]:
-    """Optional reasoning block — sent only when the provider actually honours it.
+def _provider_options() -> Dict[str, Any]:
+    """Provider knobs for every model call, tuned for reasoning-capable gateways.
 
-    Reasoning models such as zai-org/glm-5.3-flash ignore ``enabled: false`` and still
-    consume the completion budget on hidden reasoning. Sending the block with a small
-    ``max_tokens`` makes the visible ``content`` come back empty, so it is opt-in.
+    Two independent concerns:
+
+    * ``reasoning`` block — only when the provider honours it. Reasoning models such as
+      zai-org/glm-5.3-flash IGNORE ``enabled: false`` and still spend the completion
+      budget on hidden reasoning, so with a small ``max_tokens`` the visible ``content``
+      comes back empty. Opt-in via ``LLM_SEND_REASONING_PARAM``.
+    * ``reasoning_effort`` — no flag disables thinking on GLM, but this throttles it.
+      Measured on Novita: ``low`` cut reasoning tokens 283 -> 83 and call latency
+      7.7s -> 5.4s. ``LLM_REASONING_EFFORT=""`` omits the parameter.
     """
-    if not getattr(settings, "LLM_SEND_REASONING_PARAM", False):
-        return {}
-    return {"reasoning": {"enabled": False,
-                          "max_tokens": int(getattr(settings, "LLM_REASONING_MAX_TOKENS", 2048))}}
+    options: Dict[str, Any] = {}
+    effort = str(getattr(settings, "LLM_REASONING_EFFORT", "") or "").strip()
+    if effort:
+        options["reasoning_effort"] = effort
+    if getattr(settings, "LLM_SEND_REASONING_PARAM", False):
+        options["reasoning"] = {
+            "enabled": False,
+            "max_tokens": int(getattr(settings, "LLM_REASONING_MAX_TOKENS", 2048)),
+        }
+    return options
 
 
 def _extract_message_content(message: Dict[str, Any]) -> str:
@@ -298,7 +310,7 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
         ],
         "temperature": 0.3,
         "max_tokens": 4000,
-        **_reasoning_options(),
+        **_provider_options(),
     }
     if tools:
         body["tools"] = tools
@@ -488,7 +500,7 @@ async def _chat_messages(messages: list, *, with_tools: bool = True, force_json:
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 4000,
-        **_reasoning_options(),
+        **_provider_options(),
     }
     if with_tools:
         body["tools"] = RECEPTIONIST_TOOLS
@@ -535,7 +547,7 @@ async def compose_patient_reply(reply_context: Dict[str, Any]) -> Dict[str, Any]
             "temperature": float(getattr(settings, "LLM_COMPOSER_TEMPERATURE", 0.35)),
             "max_tokens": int(getattr(settings, "LLM_COMPOSER_MAX_TOKENS", 2000)),
             "response_format": {"type": "json_object"},
-            **_reasoning_options(),
+            **_provider_options(),
         }
         headers = {
             "Authorization": f"Bearer {settings.LLM_PRIMARY_API_KEY}",
@@ -583,7 +595,7 @@ async def call_repair_model(prompt: str) -> str:
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": 800,
-        **_reasoning_options(),
+        **_provider_options(),
     }
     headers = {"Authorization": f"Bearer {settings.LLM_REPAIR_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
