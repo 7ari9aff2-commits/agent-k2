@@ -2666,7 +2666,20 @@ def build_audit_entry(item: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str,
 # ---------------------------------------------------------------------------
 
 _CHARS_PER_TOKEN = 3.2  # calibrated against observed provider totals
-_USAGE_MODEL = "deepseek/deepseek-v3.2"
+def _configured_model(default: str = "deepseek/deepseek-v3.2") -> str:
+    """The model actually configured for this deployment.
+
+    The n8n nodes hardcoded a model string; the port keeps that as a fallback but prefers
+    the live setting so audit/usage rows name the model that really answered.
+    """
+    try:
+        from app.core.config import settings
+        return str(getattr(settings, "LLM_PRIMARY_MODEL", "") or default) or default
+    except Exception:
+        return default
+
+
+_USAGE_MODEL_FALLBACK = "deepseek/deepseek-v3.2"
 
 
 def _read_model_tokens(rows: Any) -> float:
@@ -2746,7 +2759,7 @@ def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[st
             "clinic_id": _first_truthy(_prop(ctx, "clinic_id"), None),
             "conversation_id": _first_truthy(_prop(ctx, "conversation_id"), None),
             "provider": "deepseek",
-            "model": _USAGE_MODEL,
+            "model": _configured_model(_USAGE_MODEL_FALLBACK),
             "input_tokens": _int_if_integral(input_tokens) if input_tokens is not None else None,
             "output_tokens": _int_if_integral(output_tokens) if output_tokens is not None else None,
             "total_tokens": _int_if_integral(total),
@@ -2767,7 +2780,7 @@ def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[st
 # Build Outgoing Message SQL Parameters
 # ---------------------------------------------------------------------------
 
-_OUTGOING_MODEL = "deepseek/deepseek-v3.2"
+_OUTGOING_MODEL_FALLBACK = "deepseek/deepseek-v3.2"
 _SAVE_FAILED_REPLY = "تعذر حفظ حالة المحادثة حاول مرة أخرى"
 
 
@@ -2862,10 +2875,10 @@ def build_outgoing_message_sql_parameters(item: Dict[str, Any], inputs: Dict[str
             _utc_now_iso(),
             outgoing_metadata,
             _first_truthy(_prop(normalized, "message_id"), None),
-            _OUTGOING_MODEL,
+            _configured_model(_OUTGOING_MODEL_FALLBACK),
             _int_if_integral(total_tokens) if total_tokens > 0 else None,
         ],
-        "outgoing_model": _OUTGOING_MODEL,
+        "outgoing_model": _configured_model(_OUTGOING_MODEL_FALLBACK),
         "outgoing_ai_tokens": _int_if_integral(total_tokens) if total_tokens > 0 else None,
     }
 

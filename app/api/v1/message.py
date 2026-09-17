@@ -296,6 +296,19 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         faq_result=faq_result,
     )
     tool_events: list[Dict[str, Any]] = []
+    agent_usage: list[Dict[str, Any]] = []
+    agent_ms = 0
+    composer_ms = 0
+
+    def _timing() -> Dict[str, Any]:
+        """Runtime snapshot for _respond_tail; reads the live locals of _run.
+
+        _respond_tail is a separate function, so anything it needs about the agent turn
+        (timing and provider token usage) has to be handed over explicitly.
+        """
+        return {"agent_ms": agent_ms, "composer_ms": composer_ms, "agent_usage": agent_usage}
+
+    _agent_started = time.time()
     try:
         agent_turn = await dialogue.call_primary_model_with_tool(user_message, context={
             "clinic_id": normalized.get("clinic_id"),
@@ -307,11 +320,13 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         })
         raw_llm_output = str(agent_turn)
         tool_events = list(getattr(agent_turn, "tool_events", []) or [])
+        agent_usage = list(getattr(agent_turn, "usage", []) or [])
     except Exception:
         # The deterministic core still completes safely. The final composer gets the
         # verified policy/DB facts and can state that information is unavailable.
         logger.exception("primary LLM failed — degrading via MODEL_CALL_FAILED path")
         raw_llm_output = ""
+    agent_ms = int((time.time() - _agent_started) * 1000)
 
     # ── L27-29 R3 LLM Response Safety → R2 Error Detection → R1 Reply Recovery ─
     safety = llm_safety.r3_llm_response_safety({"output": raw_llm_output})
@@ -337,7 +352,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                                    persona_context, {}, extracted_single,
                                    extracted_single, clinic_context, raw_llm_output,
                                    pre_extracted=extracted_single, faq_result=faq_result,
-                                   tool_events=tool_events)
+                                   tool_events=tool_events, timing=_timing())
     else:
         # [false] → Normalize Agent Output (Deterministic)
         normalized_agent_output = agent_output.normalize_agent_output({
@@ -420,7 +435,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             return await _respond_tail(normalized, state_row, state_data, policy, decision,
                                        persona_context, repaired_result, normalized_agent_output,
                                        normalized_agent, clinic_context, raw_llm_output,
-                                       tool_events=tool_events)
+                                       tool_events=tool_events, timing=_timing())
 
         # ── L47-51 P1.6 operation claim ledger ─────────────────────────────────
         claim_input = stages_post.prepare_operation_claim_input(gate_decision, {"normalize_validate": normalized})
@@ -435,7 +450,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                 return await _respond_tail(normalized, state_row, state_data, policy, claim_applied,
                                            persona_context, repaired_result, normalized_agent_output,
                                            normalized_agent, clinic_context, raw_llm_output,
-                                           tool_events=tool_events)
+                                           tool_events=tool_events, timing=_timing())
             decision = claim_applied
 
         # ── L52-55 executors ────────────────────────────────────────────────────
@@ -482,7 +497,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     return await _respond_tail(normalized, state_row, state_data, policy, decision,
                                persona_context, repaired_result, normalized_agent_output,
                                normalized_agent, clinic_context, raw_llm_output,
-                               faq_result=faq_result, tool_events=tool_events,
+                               faq_result=faq_result, tool_events=tool_events, timing=_timing(),
                                execution_results={
                                    "create": exec_create_result,
                                    "cancel": exec_cancel_result,
@@ -499,7 +514,8 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
                         pre_extracted: Optional[Dict[str, Any]] = None,
                         faq_result: Optional[Dict[str, Any]] = None,
                         tool_events: Optional[list[Dict[str, Any]]] = None,
-                        execution_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                        execution_results: Optional[Dict[str, Any]] = None,
+                        timing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Shared tail: persist confirmation → reply guard → reply extraction → audit/usage →
     handoff → state save with stale retry → log outgoing → Respond To Patient."""
     # ── L61 Persist Pending Confirmation (Deterministic) ───────────────────────
@@ -531,11 +547,13 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     composer_result: Dict[str, Any] = {}
     composer_error: Optional[str] = None
     if getattr(settings, "LLM_COMPOSER_ENABLED", True):
+        _composer_started = time.time()
         try:
             composer_result = await dialogue.compose_patient_reply(reply_context)
         except Exception as exc:
             composer_error = str(exc)
             logger.exception("final response composer failed — using the safest available model/guard reply")
+        composer_ms = int((time.time() - _composer_started) * 1000)
 
     rendered_reply = str((composer_result or {}).get("reply") or "").strip()
     if not rendered_reply:
@@ -585,20 +603,34 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "response_policy_deterministic": policy, "normalize_validate": normalized,
         "system_orchestrator_policy": decision})
     audit_entry["normalized"] = normalized
+    # The composer path no longer spreads the agent item into the audit input, so the
+    # tool trace must be attached explicitly or tool_call_count silently reports 0.
+    audit_entry["tool_calls"] = [
+        {"name": event.get("name"), "arguments": event.get("arguments")}
+        for event in (tool_events or [])
+    ]
+    audit_entry["tool_call_count"] = len(tool_events or [])
     audit_entry["reply_composer"] = {
         "origin": extracted.get("reply_origin"),
         "evidence_ids": extracted.get("composer_evidence_ids") or [],
         "missing_information": extracted.get("composer_missing_information") or [],
         "error": composer_error,
         "tool_event_count": len(tool_events or []),
+        "agent_ms": (timing or {}).get("agent_ms", 0),
+        "composer_ms": composer_ms,
+        "agent_llm_calls": len((timing or {}).get("agent_usage") or []),
     }
     await repository.log_agent_audit_entry(audit_entry)
+    composer_usage = (composer_result or {}).get("usage") or {}
     usage_rows = stages_pre.compute_ai_request_usage_deterministic({}, {
         "normalize_validate": normalized,
         "build_clinic_persona_context_deterministic": persona_context,
         "booking_assistant_agent": {"output": raw_llm_output},
         "result_reply_composer": {"output": (composer_result or {}).get("raw_output") or ""},
         "prepare_single_agent_result_context": reply_context,
+        # Provider-reported usage (preferred by _read_model_tokens over the char estimate)
+        "deepseek_model": [{"usage": u} for u in ((timing or {}).get("agent_usage") or [])],
+        "deepseek_result_model": [{"usage": composer_usage}] if composer_usage else [],
         "response_policy_deterministic": policy})
     for usage_row in (usage_rows or []):
         await repository.insert_ai_request_usage(usage_row)

@@ -323,12 +323,14 @@ class AgentTurnText(str):
 
     tool_events: list[Dict[str, Any]]
     llm_calls: int
+    usage: list[Dict[str, Any]]
 
     def __new__(cls, content: str, *, tool_events: Optional[list[Dict[str, Any]]] = None,
-                llm_calls: int = 0) -> "AgentTurnText":
+                llm_calls: int = 0, usage: Optional[list[Dict[str, Any]]] = None) -> "AgentTurnText":
         obj = str.__new__(cls, content or "")
         obj.tool_events = list(tool_events or [])
         obj.llm_calls = int(llm_calls)
+        obj.usage = list(usage or [])
         return obj
 
 
@@ -349,6 +351,7 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
     final_content: Optional[str] = None
     tool_events: list[Dict[str, Any]] = []
     tool_cache: Dict[str, Any] = {}
+    usage_events: list[Dict[str, Any]] = []
     llm_calls = 0
     total_tool_calls = 0
     max_turns = max(2, int(getattr(settings, "LLM_TOOL_MAX_TURNS", 3)))
@@ -357,6 +360,8 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
         allow_tools = (turn < max_turns - 1)
         message = await _chat_messages(messages, with_tools=allow_tools, force_json=(not allow_tools))
         llm_calls += 1
+        if message.get("_usage"):
+            usage_events.append(message["_usage"])
         final_content = message.get("content")
         tool_calls = message.get("tool_calls") or []
         if not tool_calls or not allow_tools:
@@ -467,7 +472,8 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
                 "tool_call_id": tool_call.get("id"),
                 "content": json.dumps(tool_result, ensure_ascii=False),
             })
-    return AgentTurnText(final_content or "", tool_events=tool_events, llm_calls=llm_calls)
+    return AgentTurnText(final_content or "", tool_events=tool_events, llm_calls=llm_calls,
+                         usage=usage_events)
 
 
 async def _chat_messages(messages: list, *, with_tools: bool = True, force_json: bool = False) -> Any:
@@ -496,7 +502,11 @@ async def _chat_messages(messages: list, *, with_tools: bool = True, force_json:
         if resp.status_code != 200:
             raise RuntimeError(f"primary LLM HTTP {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
-    return data["choices"][0]["message"]
+    message = data["choices"][0]["message"]
+    # Carry the provider's real token accounting back to the caller so the usage rows
+    # stop being char-count estimates.
+    message["_usage"] = data.get("usage") or {}
+    return message
 
 
 async def compose_patient_reply(reply_context: Dict[str, Any]) -> Dict[str, Any]:

@@ -162,3 +162,72 @@ def test_runner_falls_back_to_model_draft_when_composer_fails(monkeypatch):
 
     assert result["reply_text"] == "أهلاً بك! كيف أقدر أساعدك؟"
     assert result["response_code"] == "CONVERSATION_ONLY"
+
+
+def test_audit_records_tool_trace_and_real_usage(monkeypatch):
+    """Regression guard: replacing the template extractor with the composer dropped the
+    tool trace from the audit input (tool_call_count silently became 0) and usage rows
+    fell back to char-count estimates. Both are wired explicitly now."""
+    stub_io(monkeypatch)
+    import app.api.v1.message as runner
+    import app.db.repository as repo
+
+    captured: dict = {}
+
+    async def _audit(entry):
+        captured["audit"] = entry
+        return {}
+
+    usage_rows: list = []
+
+    async def _usage(row):
+        usage_rows.append(row)
+        return "INSERT 0 1"
+
+    monkeypatch.setattr(repo, "log_agent_audit_entry", _audit)
+    monkeypatch.setattr(repo, "insert_ai_request_usage", _usage)
+
+    turn = AgentTurnText(
+        SMALL_TALK_CONTRACT,
+        tool_events=[{
+            "name": "Search_Clinic_FAQ",
+            "arguments": {"query": "العنوان"},
+            "result": {"results": [{"title": "t", "content": "c"}], "count": 1},
+            "cache_hit": False,
+        }],
+        llm_calls=2,
+        usage=[{"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}],
+    )
+
+    async def _turn(*args, **kwargs):
+        return turn
+
+    async def _composer(context):
+        return {
+            "reply": "تحت أمرك.",
+            "evidence_ids": ["patient.current_message"],
+            "missing_information": [],
+            "unsupported_claims": [],
+            "grounding_status": "supported",
+            "raw_output": "{}",
+            "usage": {"prompt_tokens": 300, "completion_tokens": 40, "total_tokens": 340},
+        }
+
+    monkeypatch.setattr(runner.dialogue, "call_primary_model_with_tool", _turn)
+    monkeypatch.setattr(runner.dialogue, "compose_patient_reply", _composer)
+
+    asyncio.run(_run(valid_payload(message_text="العيادة فين؟"), {}))
+
+    audit = captured["audit"]
+    assert audit["tool_call_count"] == 1
+    assert audit["tool_calls"][0]["name"] == "Search_Clinic_FAQ"
+    assert audit["reply_composer"]["origin"] == "model_composer"
+    assert audit["reply_composer"]["tool_event_count"] == 1
+
+    nodes = {r["metadata"] and __import__("json").loads(r["metadata"]).get("model_node") for r in usage_rows}
+    assert "DeepSeek Model" in nodes
+    assert "Result Reply Composer" in nodes
+    totals = {__import__("json").loads(r["metadata"]).get("model_node"): r["total_tokens"] for r in usage_rows}
+    # provider-reported totals, not the char-count estimate
+    assert totals["DeepSeek Model"] == 120
+    assert totals["Result Reply Composer"] == 340
