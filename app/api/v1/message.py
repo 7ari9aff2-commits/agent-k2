@@ -328,6 +328,12 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         raw_llm_output = ""
     agent_ms = int((time.time() - _agent_started) * 1000)
 
+    # Recover entities the model carried in its tool-call arguments but dropped from the
+    # final contract (live incident 2026-09-17: doctor name lost after a failed
+    # Check_Doctor_Availability round → state forgot the doctor → next turn re-asked).
+    if tool_events and raw_llm_output:
+        raw_llm_output = dialogue.recover_entities_from_tool_events(raw_llm_output, tool_events)
+
     # ── L27-29 R3 LLM Response Safety → R2 Error Detection → R1 Reply Recovery ─
     safety = llm_safety.r3_llm_response_safety({"output": raw_llm_output})
     error_detected = llm_safety.r2_llm_error_detection(safety)
@@ -359,6 +365,9 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             "patient_ownership": ownership})
         try:
             repair_raw = await dialogue.call_repair_model(repair_prompt_item.get("prompt") or "")
+            # The repair model rewrites the whole contract; without this back-fill a
+            # rewrite that drops entities erases patient data the tool calls carried.
+            repair_raw = dialogue.recover_entities_from_tool_events(repair_raw, tool_events)
             repaired_result = llm_safety.validate_repaired_contract_deterministic(
                 {"text": repair_raw, "output": repair_raw},
                 {"normalize_agent_output": normalized_agent_output, "normalize_validate": normalized,

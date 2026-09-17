@@ -190,7 +190,9 @@ def build_user_message(
 AVAILABILITY_TOOL_DESCRIPTION = (
     "Check available appointment slots for a doctor on a date in the clinic local calendar. "
     "CALL whenever the patient explicitly asks about available times/days or states a specific day "
-    "or wants to book/reschedule an appointment. Returns real available slots from the clinic database. "
+    "or wants to book/reschedule an appointment. doctor_id accepts the doctor name exactly as the "
+    "patient wrote it. Only call with a requested_date the patient actually stated — if no day was "
+    "given, ask which day first. Returns real available slots from the clinic database. "
     "Never invent dates, times, or slots."
 )
 
@@ -293,6 +295,61 @@ RECEPTIONIST_TOOLS = [
 
 
 # ── Agent turn (the only model entry point) ─────────────────────────────────────
+def recover_entities_from_tool_events(raw_text: str, tool_events: Optional[list] = None) -> str:
+    """Back-fill contract entities the model dropped after a failed tool round.
+
+    The tool-call arguments are the model's own extraction. When the final JSON omits a
+    value that an earlier tool call carried — seen live on 2026-09-17: the model called
+    Check_Doctor_Availability with the doctor name, then emitted a contract with
+    entities.doctor_name null, so the saved state lost the doctor and the next turn
+    re-asked the patient — this restores it. Recovery only fills EMPTY values; it never
+    overwrites what the contract already carries and never touches non-JSON text (the
+    repair chain owns that path).
+    """
+    import re
+
+    raw = str(raw_text or "").strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return str(raw_text or "")
+    if not isinstance(parsed, dict):
+        return str(raw_text or "")
+    entities = parsed.get("entities")
+    if not isinstance(entities, dict):
+        return str(raw_text or "")
+    uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
+    changed = False
+    for event in tool_events or []:
+        if not isinstance(event, dict):
+            continue
+        args = event.get("arguments") if isinstance(event.get("arguments"), dict) else {}
+        name = str(event.get("name") or "")
+        if name == "Check_Doctor_Availability":
+            doctor = str(args.get("doctor_id") or "").strip()
+            if doctor and not uuid_re.match(doctor) and not str(entities.get("doctor_name") or "").strip():
+                entities["doctor_name"] = doctor
+                changed = True
+            requested_date = str(args.get("requested_date") or "").strip()
+            if requested_date and not str(entities.get("date") or "").strip():
+                entities["date"] = requested_date
+                changed = True
+        service_id = str(args.get("service_id") or "").strip()
+        if service_id and not str(entities.get("service_id") or "").strip():
+            entities["service_id"] = service_id
+            changed = True
+    if not changed:
+        return str(raw_text or "")
+    parsed["entities"] = entities
+    return json.dumps(parsed, ensure_ascii=False)
+
+
 class AgentTurnText(str):
     """String-compatible agent output carrying the authoritative tool trace.
 

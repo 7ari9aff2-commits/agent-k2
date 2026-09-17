@@ -131,6 +131,69 @@ def test_burst_gate_defers_message(monkeypatch):
     assert raised
 
 
+def test_failed_tool_round_does_not_drop_known_doctor(monkeypatch):
+    """Regression (2026-09-17 production incident): the model called Check_Doctor_Availability
+    with the doctor name, then its final contract omitted entities.doctor_name — the saved
+    state lost the doctor and the next turn re-asked the patient. The runner must recover
+    entities the model itself carried in its tool-call arguments."""
+    import json
+
+    from app.services.dialogue import AgentTurnText
+
+    booking_contract = json.dumps({
+        "schema_version": "k2.dialogue.v4",
+        "reply": "أهلاً وسهلاً 🌸 نساعدك مع د. أحمد الحنكشلاوي، من نوع الزيارة؟",
+        "turn": {"intent": "booking_request", "relation_to_previous_turn": "new_request"},
+        "confidence": 0.95, "ambiguous": [], "confirmation": {"intent": "none"},
+        "selection": {"kind": "none", "rank": None},
+        "entities": {"doctor_name": None, "service_name": None, "visit_type": None,
+                     "date": None, "time": None, "patient_name": None, "patient_phone": None,
+                     "patient_age": None, "reference": None},
+        "operation_proposal": {"type": "none", "requested": False},
+        "escalate": None,
+    }, ensure_ascii=False)
+    turn = AgentTurnText(booking_contract, tool_events=[{
+        "name": "Check_Doctor_Availability",
+        "arguments": {"doctor_id": "د. أحمد الحنكشلاوي", "requested_date": "2026-09-20",
+                      "service_id": None},
+        "result": {"error": "INVALID_OR_MISSING_IDENTIFIER"},
+        "cache_hit": False,
+    }], llm_calls=2)
+
+    stub_io(monkeypatch)
+    import app.api.v1.message as runner_mod
+    import app.db.repository as repo
+
+    # Production-shaped persisted state (state_version + recent_turns live INSIDE
+    # state_data; an empty state_data reads as conversation start and drops booking context).
+    async def _state(normalized):
+        return {"state_data": {
+            "state_version": 5,
+            "recent_turns": [{"role": "assistant", "content": "أهلاً بحسام"}],
+            "last_updated": "2026-09-17T19:34:53Z",
+            "booking_context": {"patient_name": "حسام عادل"},
+        }}
+
+    monkeypatch.setattr(repo, "get_conversation_state", _state)
+
+    async def _turn(*args, **kwargs):
+        return turn
+
+    captured = {}
+
+    async def _save(normalized, save_body):
+        captured["body"] = save_body
+        return {"initial": {"saved": True}, "retry": None}
+
+    monkeypatch.setattr(runner_mod.dialogue, "call_primary_model_with_tool", _turn)
+    monkeypatch.setattr(repo, "save_conversation_state_with_retry", _save)
+
+    result = asyncio.run(_run(valid_payload(message_text="احجز مع الدكتور احمد"), {}))
+    assert result["response_code"]
+    saved = json.dumps(captured["body"], ensure_ascii=False, default=str)
+    assert "د. أحمد الحنكشلاوي" in saved, "doctor from tool args must reach the saved state"
+
+
 def test_invalid_payload_returns_normalize_error(monkeypatch):
     stub_io(monkeypatch)
     from app.api.v1.message import _Exit
