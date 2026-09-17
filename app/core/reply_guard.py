@@ -154,95 +154,34 @@ def apply_reply_guard(inputs: dict) -> dict:
     decision = item.get('system_decision') if (_truthy(item.get('system_decision')) and isinstance(item.get('system_decision'), dict)) else {}
     rule = _js_or(decision.get('decision_rule'), None)
     code = _js_or(decision.get('response_code'), item.get('response_code'), None)
-    bc = _dict(_js_or(decision.get('booking_context'), {}))
-    ct = _dict(_js_or(decision.get('confirmation_target'), {}))
-    name = _js_or(bc.get('patient_name'), ct.get('patient_name'), 'المريض')
-    phone = _js_or(bc.get('patient_phone'), ct.get('patient_phone'), '')
-    date = _js_or(bc.get('date'), ct.get('date'), '')
-    time = _js_or(bc.get('time'), ct.get('time'), '')
-    facts = _dict(_js_or(item.get('facts'), {}))
-    branch_name = _js_or(facts.get('branch_name'), 'الفرع الرئيسي')
-    branch_loc = _dict(_js_or(facts.get('branch_location'), {}))
-    address = _js_or(branch_loc.get('address'), '')
-    loc_cfg = _dict(_js_or(branch_loc.get('location_config'), {}))
-    queue_base = _js_or(_js_and(facts.get('clinic_location'), _dict(facts.get('clinic_location')).get('queue_base_url')), '')
-    maps_url = _pick(
-        loc_cfg.get('maps_url'),
-        branch_loc.get('maps_url'),
-        _js_cat('https://www.google.com/maps/search/?api=1&query=', loc_cfg.get('latitude'), ',', loc_cfg.get('longitude')) if _truthy(loc_cfg.get('latitude')) else None,
+
+    # ── No patient-facing text is produced here (changed 2026-09-17) ──────────────
+    # This layer used to write a prewritten Arabic sentence per terminal response code
+    # (APPOINTMENT_CREATED, CANCEL_COMPLETED, RESCHEDULE_COMPLETED, IDEMPOTENT_REPLAY,
+    # CONFIRMATION_EXPIRED, AVAILABILITY_SOURCE_ERROR, confirm_without_target). That let
+    # a rigid template win over the model's own words — exactly what this system must
+    # never do. The model authors every reply from the fact catalog, and correctness is
+    # enforced by the evidence contract in response_context.validate_composer_output
+    # (every cited fact must exist and the model must report no unsupported claims).
+    #
+    # Detection is kept so the audit trail and the fact catalog can mark a turn as
+    # terminal, but `override` is always None: nothing here can replace the reply.
+    _TERMINAL_CODES = {
+        'APPOINTMENT_CREATED', 'CANCEL_COMPLETED', 'RESCHEDULE_COMPLETED',
+        'IDEMPOTENT_REPLAY', 'CONFIRMATION_EXPIRED', 'AVAILABILITY_SOURCE_ERROR',
+    }
+    terminal_detected = bool(code) and (
+        code in _TERMINAL_CODES
+        or (code == 'CONVERSATION_ONLY' and rule == 'confirm_without_target')
     )
-    booking_number = _pick(item.get('booking_number'), decision.get('booking_number'), bc.get('booking_number'), ct.get('booking_number'))
-    appointment_id = _pick(item.get('appointment_id'), decision.get('appointment_id'))
-    queue_number = _pick(item.get('queue_number'))
-    queue_path = _pick(item.get('queue_path'))
-    queue_base_str = _js_string(queue_base)
-    queue_url = _pick(
-        item.get('queue_url'),
-        _js_cat(re.sub(r'/$', '', queue_base_str), queue_path) if (_truthy(queue_base) and _truthy(queue_path)) else None,
-        _js_cat(re.sub(r'/$', '', queue_base_str), '/', queue_number) if (_truthy(queue_base) and _truthy(queue_number)) else None,
-    )
-
-    day_name = ''
-    if _ISO_DATE_RE.fullmatch(_js_string(date)):
-        try:
-            parsed_day = datetime.strptime(_js_string(date) + 'T12:00:00Z', '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-            # JS d.getUTCDay(): Sunday=0..Saturday=6 → Python weekday(): Monday=0..Sunday=6.
-            day_name = _WEEKDAYS_AR[(parsed_day.weekday() + 1) % 7]
-        except ValueError:
-            pass
-    date_label = _js_cat(day_name + ' ' if day_name else '', date)
-
-    override = None
-    if code == 'CONVERSATION_ONLY' and rule == 'confirm_without_target':
-        override = 'مفيش حجز معلق أأكده دلوقتي. تحب نبدأ حجز جديد؟'
-    elif code == 'AVAILABILITY_SOURCE_ERROR':
-        override = 'لحظة، مش قادرين نتأكد من المواعيد حاليًا. تحب نجرب يوم تاني؟'
-    elif code == 'APPOINTMENT_CREATED' or (code == 'IDEMPOTENT_REPLAY' and decision.get('action') == 'create_appointment'):
-        override = (
-            _js_cat('تم الحجز بنجاح يا ', name, ' ✅\nالموعد: ', date_label)
-            + (_js_cat(' الساعة ', time) if _truthy(time) else '')
-            + _js_cat('\nباسم: ', name)
-            + _js_cat('\nتلفون: ', phone)
-            + _js_cat('\nرقم الحجز: ', _js_or(booking_number, appointment_id, '-'))
-            + _js_cat('\nالفرع: ', branch_name)
-            + _js_cat('\nالعنوان: ', address)
-            + (_js_cat('\nلوكيشن العيادة: ', maps_url) if _truthy(maps_url) else '')
-            + (_js_cat('\nلينك الكيو: ', queue_url) if _truthy(queue_url) else '')
-        )
-    elif code == 'CANCEL_COMPLETED':
-        override = (
-            _js_cat('تم إلغاء حجزك بنجاح يا ', name)
-            + (_js_cat('\nرقم الحجز: ', booking_number) if _truthy(booking_number) else '')
-            + '\nنشوفك في زيارة قريبة، ونتمنى لك دوام الصحة والعافية'
-        )
-    elif code == 'RESCHEDULE_COMPLETED':
-        override = (
-            _js_cat('تم تعديل حجزك يا ', name, ' ✅\nالموعد الجديد: ', date_label)
-            + (_js_cat(' الساعة ', time) if _truthy(time) else '')
-            + (_js_cat('\nرقم الحجز: ', booking_number) if _truthy(booking_number) else '')
-        )
-    elif code == 'IDEMPOTENT_REPLAY':
-        override = 'حجزك متسجل بالفعل ومتفعّل ✅' + (_js_cat('\nرقم الحجز: ', booking_number) if _truthy(booking_number) else '')
-    elif code == 'CONFIRMATION_EXPIRED':
-        override = 'الموعد المعلق انتهت صلاحية حجزه المؤقت. تحب نتحقق من المواعيد المتاحة ونحجز من جديد؟'
-
-    if not override:
-        return item
-
-    def _rewrite(s):
-        try:
-            o = json.loads(s)
-            if o and isinstance(o, dict) and isinstance(o.get('reply'), str):
-                o['reply'] = override
-                return _json_stringify(o)
-        except Exception:
-            pass
-        return s
 
     out = dict(item)
-    for k in ('output', 'text', 'agent_raw_output'):
-        if isinstance(out.get(k), str):
-            out[k] = _rewrite(out[k])
-    out['agent_reply'] = override
-    out['_reply_guard'] = {'triggered': True, 'rule': rule, 'code': code, 'override': override, 'read_from': 'Response Policy (Deterministic)'}
+    out['_reply_guard'] = {
+        'triggered': terminal_detected,
+        'rule': rule,
+        'code': code,
+        'override': None,
+        'read_from': 'Response Policy (Deterministic)',
+        'text_generation': 'removed 2026-09-17 - the model authors every patient reply',
+    }
     return out

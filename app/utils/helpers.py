@@ -3,11 +3,6 @@ from typing import Optional
 
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 
-def is_valid_uuid(val: Optional[str]) -> bool:
-    if not val:
-        return False
-    return bool(UUID_RE.match(str(val).strip()))
-
 def mint_uuid(seed: Optional[str]) -> str:
     """
     Deterministic UUID mint (pure): FNV-1a hash of a seed, formatted 8-4-4-4-12

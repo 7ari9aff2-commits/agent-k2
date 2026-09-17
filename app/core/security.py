@@ -21,9 +21,3 @@ def verify_internal_token(
     return True
 
 
-def verify_hmac_signature(raw_body: bytes, signature: str) -> bool:
-    """Optional transport HMAC; the authoritative check is the DB RPC k2_verify_inbound_signature."""
-    if not settings.HMAC_SECRET:
-        return False
-    expected = hmac.new(settings.HMAC_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected)

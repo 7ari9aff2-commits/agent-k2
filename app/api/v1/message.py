@@ -39,6 +39,12 @@ class K2JSONResponse(JSONResponse):
         return json.dumps(content, ensure_ascii=False, default=str).encode("utf-8")
 
 
+# The only static patient-facing string in the pipeline. It is not a reply: it is an
+# infrastructure-failure notice, used only when every model-authored candidate is empty
+# (all LLM calls failed). It deliberately makes no claim about the patient's request.
+_MODEL_UNAVAILABLE_REPLY = "معلش، حصلت مشكلة تقنية عندنا دلوقتي. ممكن تبعت رسالتك تاني؟"
+
+
 class _Exit(Exception):
     """Early webhook exit carrying the exact n8n respond-node payload + status."""
 
@@ -239,13 +245,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         except Exception:
             logger.exception("replay response composer failed — using deterministic safety fallback")
         replay_reply = str((replay_composer or {}).get("reply") or "").strip()
-        replay_guard = guard
-        if replay_reply and isinstance((guard or {}).get("_reply_guard"), dict):
-            replay_guard = dict(guard)
-            replay_guard_meta = dict(guard.get("_reply_guard") or {})
-            replay_guard_meta["override"] = None
-            replay_guard_meta["superseded_by"] = "model_composer"
-            replay_guard["_reply_guard"] = replay_guard_meta
+        replay_guard = guard  # the guard carries metadata only, never text
         outgoing_params = stages_pre.build_outgoing_message_sql_parameters({}, {
             "normalize_validate": normalized,
             "save_conversation_state": {"saved": True},
@@ -336,30 +336,19 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     # ── L30 K2 Contract Adapter (v4 to v3) ─────────────────────────────────────
     adapted = contract_adapter.contract_v4_to_v3(recovery or {})
 
-    # ── L31-32 Route Single Agent Phase + IF Single Agent Result Phase ─────────
-    routed = stages_pre.route_single_agent_phase(adapted, {
-        "prepare_single_agent_result_context": {}, "route_single_agent_phase": {}})
-    if conditions_pre.if_single_agent_result_phase(routed):
-        # [true] → Extract Single Agent Reply (renders the reply for conversational turns)
-        prepared = stages_post.prepare_single_agent_result_context(routed, {
-            "normalize_validate": normalized, "system_orchestrator": {}, "conversation_state": state_row,
-            "clinic_context": clinic_context, "persona_builder": persona_context})
-        extracted_single = stages_post.extract_single_agent_reply(prepared, {
-            "normalize_validate": normalized, "conversation_state": state_row,
-            "clinic_context": clinic_context, "persona_builder": persona_context})
-        policy = {"response_code": "CONVERSATION_ONLY", "output": {}}
-        return await _respond_tail(normalized, state_row, state_data, policy, {},
-                                   persona_context, {}, extracted_single,
-                                   extracted_single, clinic_context, raw_llm_output,
-                                   pre_extracted=extracted_single, faq_result=faq_result,
-                                   tool_events=tool_events, timing=_timing())
-    else:
-        # [false] → Normalize Agent Output (Deterministic)
-        normalized_agent_output = agent_output.normalize_agent_output({
-            "current": adapted, "normalize_validate": normalized, "conversation_state": state_row,
-            "clinic_context": clinic_context, "patient_ownership": ownership,
-            "persona_builder": persona_context})
-        normalized_agent = normalized_agent_output
+    # ── L33 Normalize Agent Output (Deterministic) ─────────────────────────────
+    # The n8n graph branched here on Route Single Agent Phase -> IF Single Agent Result
+    # Phase, whose [true] arm called Extract Single Agent Reply (a per-response-code
+    # Arabic reply table). That branch was UNREACHABLE: route_single_agent_phase was
+    # called with empty inputs, so upstream_phase was always None, has_execution_evidence
+    # was always False and loop_count always 1 — phase was always "understand".
+    # Both ports and the branch were removed 2026-09-17. Replies are authored by the
+    # model from the fact catalog (app/core/response_context.py).
+    normalized_agent_output = agent_output.normalize_agent_output({
+        "current": adapted, "normalize_validate": normalized, "conversation_state": state_row,
+        "clinic_context": clinic_context, "patient_ownership": ownership,
+        "persona_builder": persona_context})
+    normalized_agent = normalized_agent_output
 
     # ── L34 IF Contract Needs Repair → Build Repair Prompt → Repair Chain ──────
     repaired_result: Dict[str, Any] = {}
@@ -557,16 +546,15 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
 
     rendered_reply = str((composer_result or {}).get("reply") or "").strip()
     if not rendered_reply:
-        guard_override = None
-        if isinstance((guard or {}).get("_reply_guard"), dict):
-            guard_override = (guard.get("_reply_guard") or {}).get("override")
+        # Model-first, always. Every model-authored candidate is tried before the single
+        # infrastructure notice below. No response-code template is consulted: a rigid
+        # prewritten sentence must never stand in for the agent's own words.
         rendered_reply = str(
-            guard_override
-            or policy.get("agent_reply")
+            policy.get("agent_reply")
             or normalized_agent_output.get("agent_reply")
             or repaired_result.get("agent_reply")
             or base_extracted.get("agent_reply")
-            or "تعذر تكوين رد موثوق حاليًا. حاول مرة أخرى بعد قليل."
+            or _MODEL_UNAVAILABLE_REPLY
         ).strip()
 
     extracted = {
@@ -582,16 +570,9 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "composer_missing_information": (composer_result or {}).get("missing_information") or [],
     }
 
-    # A successful, evidence-validated composer reply supersedes the legacy guard's
-    # prewritten fallback text. The guard facts/code were already included in the
-    # composer's fact catalog; the override remains available if the composer fails.
+    # apply_reply_guard no longer produces patient-facing text at all (override is always
+    # None), so nothing has to be cleared here. The metadata still travels for the audit.
     guard_for_delivery = guard
-    if composer_result and isinstance((guard or {}).get("_reply_guard"), dict):
-        guard_for_delivery = dict(guard)
-        guard_meta = dict(guard.get("_reply_guard") or {})
-        guard_meta["override"] = None
-        guard_meta["superseded_by"] = "model_composer"
-        guard_for_delivery["_reply_guard"] = guard_meta
 
     # ── L65-66 Derive Actions + audit + AI usage ───────────────────────────────
     actions = contract_adapter.derive_actions({

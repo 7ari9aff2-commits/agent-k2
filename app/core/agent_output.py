@@ -560,21 +560,6 @@ _NEGATION_BEFORE_RE = re.compile(r'(?:مش|ما' + _JS_S + r'|مفيش|لن|لم
 _HAL_RE = re.compile(_JS_S + r'*هل')
 
 
-def _claim_sanitize(text):
-    """JS claimSanitize — the first CLAIM_RE match survives only when negated right before it."""
-    s = _js_string(_js_or(text, ''))
-    # JS first applies .replace(/^\s*هل/, (h) => h) — replaces the match with itself: a no-op.
-
-    def _sub(m):
-        off = _cp_to_u16(s, m.start())
-        before = _u16_slice(s, max(0, off - 10), off)
-        return m.group(0) if _NEGATION_BEFORE_RE.search(before) else 'تمام'
-
-    s = _CLAIM_RE.sub(_sub, s, count=1)
-    s = _WS_2PLUS_RE.sub(' ', s)
-    return _js_trim(s)
-
-
 # ── Validator context: clinic-local calendar + country for format checks ──
 
 def _build_validator_ctx(ctx_node, clinic_row, ownership, now_date):
@@ -735,13 +720,16 @@ def _validate_contract(raw, ctx):
         return {'valid': False, 'errors': errors if errors else ['contract_missing'], 'warnings': warnings, 'contract': None}
     out = {'schema_version': SCHEMA_VERSION, 'phase': 'understand', 'reply': _clean_str(_prop(c, 'reply'))}
 
-    # P41 CLAIM-GUARD: an understand-phase reply may never claim a completed
-    # booking/confirmation — execution truth belongs to the deterministic layers.
+    # P41 CLAIM-GUARD - DETECTION ONLY (changed 2026-09-17).
+    # This used to rewrite the model's sentence, replacing the first claim with the
+    # literal 'تمام'. Rewriting the model's words is not how this system works: the
+    # model is taught up front what it may claim (see the composer prompt), and
+    # correctness is enforced by the evidence contract in
+    # response_context.validate_composer_output - the composer may only assert a
+    # completed operation when a mutation_result fact says so. The detection is kept as
+    # a warning so the audit still shows turns where the model over-claimed.
     if isinstance(out['reply'], str) and not _HAL_RE.match(out['reply']) and _CLAIM_RE.search(out['reply']):
-        sanitized = _claim_sanitize(out['reply'])
-        if sanitized != out['reply']:
-            out['reply'] = sanitized
-            warnings.append('reply_claim_sanitized')
+        warnings.append('reply_claims_unverified_booking')
 
     def _in_enum(value, allowed, fallback):
         v = _js_string('' if value is None else value).strip().lower()

@@ -232,13 +232,6 @@ async def _fetchrow(conn: "asyncpg.Connection", sql: str, *args: Any) -> Optiona
     return _decode_record(rows[0], statement.get_attributes())
 
 
-async def _fetch(conn: "asyncpg.Connection", sql: str, *args: Any) -> list:
-    statement = await conn.prepare(sql)
-    rows = await statement.fetch(*args)
-    attributes = statement.get_attributes()
-    return [_decode_record(row, attributes) for row in rows]
-
-
 # ---------------------------------------------------------------------------
 # Inbound security gate + message logging
 # ---------------------------------------------------------------------------

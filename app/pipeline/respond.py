@@ -24,6 +24,9 @@ def _has_transport_error(value: Optional[Dict[str, Any]]) -> bool:
                 or status_code >= 400 or status >= 400)
 
 
+_SAVE_FAILED_REPLY = "تعذر حفظ حالة المحادثة حاول مرة أخرى"
+
+
 def build_final_response(
     normalized: Dict[str, Any],
     outgoing_message_id: Optional[str],
@@ -37,9 +40,13 @@ def build_final_response(
     """Source node: Respond To Patient (responseBody expression).
 
     reply_text precedence:
-      1. state-save transport/stale failure -> 'تعذر حفظ حالة المحادثة حاول مرة أخرى'
-      2. reply guard override (_reply_guard.override)
-      3. rendered_reply from Extract Single Agent Reply
+      1. state-save transport/stale failure -> the save-failure notice (infrastructure)
+      2. rendered_reply — the model-authored reply, always preferred
+      3. _reply_guard.override — legacy field, now always None
+
+    The model owns the conversation: no response-code template may replace its words.
+    apply_reply_guard no longer writes override text at all, and this ordering makes that
+    guarantee structural rather than incidental.
     """
     initial = save_initial or {}
     retry = save_retry or {}
@@ -52,15 +59,22 @@ def build_final_response(
             and initial.get("rejected_reason") != "CONCURRENT_STATE_STALE")
     )
     if failed:
-        reply_text = "تعذر حفظ حالة المحادثة حاول مرة أخرى"
+        # Infrastructure failure: the state could not be persisted, so the turn must not
+        # look successful. This is a notice, not a reply, and it is the only static
+        # patient-facing string besides _MODEL_UNAVAILABLE_REPLY.
+        reply_text = _SAVE_FAILED_REPLY
     else:
         guard = reply_guard_result or {}
         override = ((guard.get("_reply_guard") or {}).get("override")) if isinstance(guard.get("_reply_guard"), dict) else None
-        reply_text = override if override else rendered_reply
+        # Model first. `override` is a legacy field that apply_reply_guard now always
+        # sets to None; if it ever carries text again it must not outrank the model.
+        reply_text = rendered_reply or override
 
     out = response_policy_output or {}
     guard = reply_guard_result or {}
-    deterministic_override = bool(isinstance(guard.get("_reply_guard"), dict) and guard["_reply_guard"].get("override"))
+    # True only when a prewritten override was actually the text sent. Since the model's
+    # reply now outranks it, this is False whenever the model produced anything.
+    deterministic_override = bool(not failed and not rendered_reply and override)
     return {
         "reply_text": reply_text,
         "conversation_id": (normalized or {}).get("conversation_id"),

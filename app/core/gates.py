@@ -307,7 +307,8 @@ def execution_transition_guard_deterministic(item: Dict[str, Any], conversation_
             "response_code": "INVALID_STATE_TRANSITION",
             "transition_guard": {"event": action or "unknown", "from_state": from_state, "allowed": False},
             "audit_event": "invalid_transition",
-            "final_reply": "لا أستطيع تنفيذ العملية في الحالة الحالية. سأراجع تفاصيل الحجز أولاً.",
+            # No patient-facing text here: the model authors every reply (see reply_guard).
+        "final_reply": None,
         }
         guarded_output = {
             **_first_truthy(_prop(item, "output"), {}),
@@ -463,11 +464,11 @@ def business_time_gate_deterministic(guard: Dict[str, Any], row: Dict[str, Any])
     business_time_source = "clinic_business_hours" if timezone_configured else "clinic_configuration_error"
     if should_check and not allowed:
         if status == "TIMEZONE_NOT_CONFIGURED":
-            final_reply = "تعذر تنفيذ العملية لأن المنطقة الزمنية للعيادة غير مهيأة أو غير صالحة."
+            final_reply = None  # timezone not configured - reason only, no canned text
         elif status == "UNAVAILABLE":
-            final_reply = "تعذر التحقق من ساعات عمل العيادة لذلك لن أنفذ الحجز قبل اكتمال التحقق."
+            final_reply = None  # business hours unverified - reason only, no canned text
         else:
-            final_reply = "الموعد المطلوب خارج ساعات عمل العيادة اختر وقتاً داخل ساعات الدوام."
+            final_reply = None  # outside business hours - reason only, no canned text
         final_decision = {
             **decision,
             "allowed": False,

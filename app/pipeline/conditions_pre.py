@@ -137,20 +137,6 @@ def if_non_scheduling_turn_v19(item: Dict[str, Any]) -> bool:
     return bool(system_decision) and _bool_true(_prop(system_decision, "non_scheduling_turn"))
 
 
-def if_single_agent_result_phase(item: Dict[str, Any]) -> bool:
-    """Source node: IF Single Agent Result Phase (extracted/nodes/IF_Single_Agent_Result_Phase.json).
-
-    combinator 'and', typeValidation 'strict':
-      leftValue `={{ $json.agent_phase || $json.single_agent_phase }}` with string
-      operator 'equals' and rightValue "result" (caseSensitive: true). When both
-      are undefined the strict string validation fails -> false.
-    """
-    left = _prop(item, "agent_phase")
-    if not (isinstance(left, str) and left):
-        left = _prop(item, "single_agent_phase")
-    return _string_equals(left, "result")
-
-
 def if_handoff_required(item: Dict[str, Any]) -> bool:
     """Source node: IF Handoff Required (extracted/nodes/IF_Handoff_Required.json).
 

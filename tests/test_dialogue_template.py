@@ -4,7 +4,7 @@ Mirrors agent_user_message_template.js branch by branch.
 Persona fallbacks use correct UTF-8 Arabic strings after mojibake fix.
 FAQ facts are injected whenever results are available, regardless of prompt profile.
 """
-from app.services.dialogue import build_user_message, parse_contract_json
+from app.services.dialogue import build_user_message
 
 
 CLINIC = "123e4567-e89b-42d3-a456-426614174000"
@@ -83,15 +83,3 @@ def test_offered_maps_rank_date_time_only():
     st = {"pending_offer": {"alternatives": [{"rank": 2, "slot_id": "s", "local_date": "2026-09-20", "local_time": "17:30", "extra": 1}]}}
     msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "x"}, {}, st, None)
     assert '{"rank": 2, "date": "2026-09-20", "time": "17:30"}' in msg and "slot_id" not in msg.split('"offered":')[1].split("]")[0]
-
-
-def test_parse_contract_strips_code_fences():
-    raw = '```json\n{"schema_version":"k2.dialogue.v4","reply":"تمام"}\n```'
-    out = parse_contract_json(raw)
-    assert out["schema_version"] == "k2.dialogue.v4"
-    try:
-        parse_contract_json("not json")
-        raised = False
-    except ValueError:
-        raised = True
-    assert raised

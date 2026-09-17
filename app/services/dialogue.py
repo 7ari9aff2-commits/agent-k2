@@ -292,40 +292,7 @@ RECEPTIONIST_TOOLS = [
 ]
 
 
-# ── DeepSeek Model node (primary) ───────────────────────────────────────────────
-async def call_primary_model(user_message: str, tools: Optional[list] = None) -> Any:
-    """DEPRECATED / UNUSED — the pre-tools single-shot model call.
-
-    Superseded by ``call_primary_model_with_tool``, which is the only agent entry point
-    the pipeline uses. Kept only because it is the documented port of the n8n
-    "DeepSeek Model" node (docs/port_conventions.md). Do NOT wire it back in: it has no
-    reception tools, so it cannot ground availability, catalog, or appointment answers
-    in Supabase data.
-    """
-    body: Dict[str, Any] = {
-        "model": settings.LLM_PRIMARY_MODEL,
-        "messages": [
-            {"role": "system", "content": load_system_message()},
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 4000,
-        **_provider_options(),
-    }
-    if tools:
-        body["tools"] = tools
-        body["tool_choice"] = "auto"
-    else:
-        body["response_format"] = {"type": "json_object"}
-    headers = {"Authorization": f"Bearer {settings.LLM_PRIMARY_API_KEY}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
-        resp = await client.post(f"{settings.LLM_PRIMARY_BASE_URL.rstrip('/')}/chat/completions", headers=headers, json=body)
-        if resp.status_code != 200:
-            raise RuntimeError(f"primary LLM HTTP {resp.status_code}: {resp.text[:300]}")
-        data = resp.json()
-    return data["choices"][0]["message"]
-
-
+# ── Agent turn (the only model entry point) ─────────────────────────────────────
 class AgentTurnText(str):
     """String-compatible agent output carrying the authoritative tool trace.
 
@@ -563,7 +530,8 @@ async def compose_patient_reply(reply_context: Dict[str, Any]) -> Dict[str, Any]
             raise RuntimeError(f"response composer HTTP {resp.status_code}: {resp.text[:300]}")
 
         data = resp.json()
-        raw = str((((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or "")
+        message = ((data.get("choices") or [{}])[0].get("message") or {})
+        raw = _extract_message_content(message)
         parsed, validation_errors = validate_composer_output(raw, reply_context)
         if parsed is not None:
             parsed["raw_output"] = raw
@@ -606,19 +574,3 @@ async def call_repair_model(prompt: str) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-def parse_contract_json(raw_text: str) -> Dict[str, Any]:
-    """Parse the model's single JSON line into the k2.dialogue.v4 contract dict. Raises ValueError."""
-    raw = str(raw_text or "").strip()
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        raw = parts[1] if len(parts) > 1 else raw
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"contract is not valid JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError("contract is not a JSON object")
-    return parsed

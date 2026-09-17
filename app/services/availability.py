@@ -116,11 +116,6 @@ def _uuid(value: Any) -> Optional[uuidlib.UUID]:
     return uuidlib.UUID(s) if _UUID_RE.match(s) else None
 
 
-def _js_iso_now_ms() -> str:
-    """JS new Date().toISOString() equivalent: millisecond precision + trailing Z."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-
-
 def js_iso_from_ms(ms: float) -> str:
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 

@@ -89,42 +89,6 @@ async def test_business_time_gate_decision_propagation(monkeypatch):
     assert recorded_decision.get("response_code") == "OFF_HOURS_BLOCKED"
 
 
-@pytest.mark.asyncio
-async def test_single_agent_result_phase_bypass(monkeypatch):
-    """BUG-4: Single agent result phase should bypass scheduling stages and not call extract twice —
-    but the reply guard + persist-confirmation must STILL run (safety is not optional)."""
-    stub_io(monkeypatch)
-
-    # Route single agent phase outputs phase="result"
-    import app.pipeline.stages_pre as stages_pre
-    monkeypatch.setattr(stages_pre, "route_single_agent_phase", lambda item, inputs: {
-        **item,
-        "agent_phase": "result",
-        "loop_count": 1,
-    })
-
-    guard_calls = []
-    import app.core.reply_guard as reply_guard_mod
-    real_guard = reply_guard_mod.apply_reply_guard
-    def _spy_guard(inputs):
-        guard_calls.append(inputs)
-        return real_guard(inputs)
-    monkeypatch.setattr("app.api.v1.message.reply_guard.apply_reply_guard", _spy_guard)
-
-    persist_calls = []
-    import app.db.repository as repo
-    async def _spy_persist(ctx):
-        persist_calls.append(ctx)
-        return {}
-    monkeypatch.setattr(repo, "persist_pending_confirmation", _spy_persist)
-
-    resp = await _run(valid_payload(), {})
-    assert resp.get("response_code") is not None
-    assert "reply_text" in resp
-    assert len(guard_calls) == 1, "reply guard must run exactly once on the single-agent result path"
-    assert len(persist_calls) == 1, "persist_pending_confirmation must run on the single-agent result path"
-
-
 def test_dialogue_fallback_local_time_and_date():
     """BUG-5: build_user_message derives date and time when missing from canonical_time_context."""
     clinic = {"clinic_name": "عيادة الرازي", "doctor_count": 1}

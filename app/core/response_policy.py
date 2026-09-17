@@ -524,17 +524,6 @@ def build_response(ctx: dict) -> dict:
         or _js_string(_js_or(entities.get('references_prior_conversation'), '')).strip().lower() == 'true'
     )
     suppress_prior_draft_on_fresh_booking = decision.get('new_booking_restart') is True and not references_prior_conversation
-    human_labels = {
-        'doctor_or_service': 'اسم الطبيب أو نوع الكشف',
-        'doctor': 'اسم الطبيب',
-        'service': 'نوع الكشف',
-        'date': 'اليوم المناسب',
-        'time': 'الوقت المناسب',
-        'patient_name': 'اسم المريض',
-        'patient_phone': 'رقم التواصل',
-        'patient_age': 'العمر',
-        'patient_address': 'العنوان',
-    }
 
     # ── Confirmation target ──
     _ct = decision.get('confirmation_target')
@@ -984,185 +973,6 @@ def build_response(ctx: dict) -> dict:
         'deterministic_identity_resolution': identity_resolution_fact,
     }
 
-    # ── Deterministic fallback reply (only if DeepSeek #2 fails) ──
-    # This is NOT sent directly — it's passed to DeepSeek #2 as a safety net
-    def _fallback_appointment_created():
-        lines = []
-        name = _js_string(_js_or(execution.get('patient_name'), '')).strip()
-        phone = _js_string(_js_or(execution.get('patient_phone'), '')).strip()
-        booking = _js_string(_js_or(booking_number, '')).strip()
-        location = _js_or(_dig(branch_location, 'location_config'), clinic_location, {})
-        location = location if isinstance(location, dict) else {}
-        address = _js_string(_js_or(location.get('address'), location.get('label'), '')).strip()
-        maps = _js_string(_js_or(location.get('maps_url'), '')).strip()
-        if name:
-            lines.append(f'الاسم {_js_string(name)}')
-        if phone:
-            lines.append(f'رقم الهاتف {_js_string(phone)}')
-        if booking:
-            lines.append(f'رقم الحجز {_js_string(booking)}')
-        if address or maps:
-            lines.append(f"لوكيشن العيادة {' '.join(p for p in (address, maps) if p)}")
-        if queue_url:
-            lines.append(f'لينك الكيو {_js_string(queue_url)}')
-        return '\n'.join(lines) or 'تم تأكيد حجزك بنجاح'
-
-    def _fallback_new_booking_started():
-        # ── FIX v8b (contradiction #3): the generic fallback asked for the doctor name even when the
-        # doctor was already deterministically resolved — now it mentions the resolved doctor. ──
-        dir_fact = safe_facts.get('deterministic_identity_resolution')
-        dir_fact = dir_fact if isinstance(dir_fact, dict) else {}
-        dir_matches = dir_fact.get('doctor_matches') if isinstance(dir_fact.get('doctor_matches'), list) else []
-        first_match = _dict(dir_matches[0]) if dir_matches else {}
-        resolved_doctor_name = _js_string(_js_or(first_match.get('doctor_name'), '')).strip()
-        doctor_resolved = bool(_truthy(dir_fact.get('doctor_resolved')))
-        missing_part = (
-            'اسم الدكتور الذي ترغب بالحجز معه حتى أكمل لك'
-            if _truthy(safe_entities.get('service_name'))
-            else 'نوع الكشف أو الخدمة التي تحتاجها حتى أكمل الحجز'
-        )
-        # contradiction #7: also surface a suspended prior draft from the conversation state itself
-        # (doctor/date/service from the old booking_context) so the patient is told what exists.
-        prior_draft = None
-        if not suppress_prior_draft_on_fresh_booking:
-            try:
-                state_data = _read_node(ctx, 'conversation_state').get('state_data') or {}
-                if isinstance(state_data, dict):
-                    bc = _js_or(state_data.get('booking_context'), state_data.get('slot_state'), {})
-                    bc = bc if isinstance(bc, dict) else {}
-                    if _truthy(bc.get('doctor_name')):
-                        prior_draft = {
-                            'doctor_name': _js_string(bc.get('doctor_name')).strip(),
-                            'date': _js_or(bc.get('date'), None),
-                            'time': _js_or(bc.get('time'), None),
-                            'service_name': _js_or(bc.get('service_name'), None),
-                        }
-            except Exception:
-                prior_draft = None
-        if prior_expired_booking is not None and _truthy(prior_expired_booking.get('doctor_name')):
-            prior_part = (
-                f"الحجز القديم اللي مع {_js_string(prior_expired_booking.get('doctor_name'))} انقضى وقته، يلا نبدأ حجز جديد. "
-            )
-        elif prior_draft is not None and _truthy(prior_draft.get('doctor_name')):
-            date_part = f" ليوم {_js_string(prior_draft.get('date'))}" if _truthy(prior_draft.get('date')) else ''
-            service_part = f" ({_js_string(prior_draft.get('service_name'))})" if _truthy(prior_draft.get('service_name')) else ''
-            prior_part = (
-                f"عندنا طلب سابق معلق مع الدكتور {_js_string(prior_draft.get('doctor_name'))}"
-                f"{date_part}{service_part} — لو تبغى تلغيه أو تكمل عليه قول لي، وها نبدأ حجز جديد. "
-            )
-        else:
-            prior_part = ''
-        if doctor_resolved and resolved_doctor_name:
-            return f'حسنًا سأكمل حجزك مع الدكتور {resolved_doctor_name} {prior_part}{missing_part}'
-        if doctor_resolved:
-            return f'تمام، نبدأ حجز جديد. {prior_part}{missing_part}'
-        return f'{prior_part}حسنًا نبدأ حجزًا جديدًا اذكري اسم الدكتور أو نوع الكشف وسأكمل معك'
-
-    def _fallback_confirmation_required():
-        if confirmation_target is None:
-            return 'محتاج تأكيد منك عشان أكمل.'
-        if confirmation_action == 'create_appointment':
-            action_word = 'حجز'
-        elif confirmation_action == 'cancel_appointment':
-            action_word = 'إلغاء'
-        else:
-            action_word = 'تعديل'
-        doctor_part = (
-            f" مع {_js_string(confirmation_target.get('doctor_name'))}"
-            if _truthy(confirmation_target.get('doctor_name')) else ''
-        )
-        date_part = (
-            f" يوم {_js_string(confirmation_target.get('date'))}"
-            if _truthy(confirmation_target.get('date')) else ''
-        )
-        time_part = (
-            f" الساعة {_js_string(confirmation_target.get('time'))[0:5]}"
-            if _truthy(confirmation_target.get('time')) else ''
-        )
-        return f'هل تؤكد {action_word}{doctor_part}{date_part}{time_part}؟'
-
-    def _fallback_booking_recovery():
-        try:
-            efc = _read_node(ctx, 'persona_builder').get('error_followup_context') or {}
-            if isinstance(efc, dict) and efc.get('next_field') == 'doctor':
-                return 'صار خلل بسيط في الرد السابق ونكمل الحجز من حيث وقفنا. ارسل لي اسم الطبيب عشان أكمل.'
-            return 'صار خلل بسيط في الرد السابق ونكمل الحجز من حيث وقفنا. ارسل لي اليوم المناسب عشان أكمل.'
-        except Exception:
-            return 'صار خلل بسيط في الرد السابق ونكمل الحجز من حيث وقفنا. ارسل لي التفاصيل الناقصة عشان أكمل.'
-
-    _alt_join = '، '.join(alternative_labels)
-    _fb_missing_required = (
-        f'محتاج أعرف {human_labels[next_best_missing]} عشان أكمل.'
-        if isinstance(next_best_missing, str) and next_best_missing in human_labels
-        else 'محتاج تفاصيل أكتر عشان أقدر أساعدك.'
-    )
-    _fb_slot_unavailable = (
-        f'الوقت المطلوب غير متاح. المواعيد البديلة: {_alt_join}'
-        if alternative_labels
-        else 'الوقت المطلوب غير متاح حالياً.'
-    )
-
-    # NOTE: the JS object literal below defines REQUESTED_TIME_NOT_AVAILABLE, NO_AVAILABLE_SLOTS,
-    # DOCTOR_NOT_WORKING_THAT_DAY and FULLY_BOOKED twice — JS object semantics keep the LAST
-    # definition; a Python dict display has the same last-wins semantics, so both entries are
-    # ported in the original order and the later (winning) value is the effective one.
-    fallback_by_code = {
-        'APPOINTMENT_CREATED': _fallback_appointment_created(),
-        'CANCEL_COMPLETED': 'تم إلغاء الحجز بنجاح.',
-        'CANCELLATION_NOT_ALLOWED': 'لا يمكن إلغاء هذا الحجز في حالته الحالية.',
-        'APPOINTMENT_NOT_FOUND_OR_NOT_OWNED': 'الحجز غير موجود أو لا ينتمي لهذا المريض.',
-        'IDEMPOTENT_REPLAY': 'تمت معالجة هذا الطلب من قبل ولم أكرر العملية.',
-        'CANCEL_RETRYABLE': 'تعذر إلغاء الحجز حاليًا. أقدر أعيد المحاولة.',
-        'RESCHEDULE_NOT_ALLOWED': 'لا يمكن تعديل هذا الحجز في حالته الحالية.',
-        'RESCHEDULE_RETRYABLE': 'تعذر تعديل الحجز حاليًا. أقدر أعيد المحاولة.',
-        'CHILD_CONTRACT_INVALID': 'تعذر التحقق من نتيجة العملية ويحتاج الأمر إلى مراجعة موظف الاستقبال.',
-        'PROVIDER_UNAVAILABLE': 'تعذر معالجة الرسالة حاليًا بسبب مشكلة مؤقتة. حاول مرة ثانية.',
-        'OPERATION_INCONCLUSIVE': 'تعذر التحقق بأمان من نتيجة محاولة سابقة، لذلك لم أعد تنفيذ العملية تلقائياً. يحتاج الأمر إلى مراجعة موظف الاستقبال.',
-        'RESCHEDULE_COMPLETED': 'تم تعديل موعدك بنجاح.',
-        'SLOT_UNAVAILABLE': _fb_slot_unavailable,
-        'REQUESTED_TIME_NOT_AVAILABLE': (
-            f'الوقت المطلوب غير متاح. هذه أقرب المواعيد المتحققة: {_alt_join}'
-            if alternative_labels
-            else 'الوقت المطلوب غير متاح حالياً.'
-        ),
-        'NO_AVAILABLE_SLOTS': (
-            f'ما لقيت موعداً في اليوم المطلوب. هذه أقرب المواعيد المتحققة: {_alt_join}'
-            if alternative_labels
-            else 'ما لقيت موعداً متاحاً في اليوم المطلوب حالياً.'
-        ),
-        'DOCTOR_NOT_WORKING_THAT_DAY': (
-            f'الدكتور غير متاح في اليوم المطلوب. هذه أقرب المواعيد المتحققة: {_alt_join}'
-            if alternative_labels
-            else 'الدكتور غير متاح في اليوم المطلوب وما لقيت موعداً قريباً متحققاً.'
-        ),
-        'FULLY_BOOKED': (
-            f'المواعيد في اليوم المطلوب محجوزة. هذه أقرب المواعيد المتحققة: {_alt_join}'
-            if alternative_labels
-            else 'المواعيد في اليوم المطلوب محجوزة حالياً.'
-        ),
-        'NO_AVAILABLE_SLOTS_IN_WINDOW': 'ما لقيت موعداً متاحاً متحققاً في الأيام القريبة التي تم البحث فيها. تبغى أبحث في فترة أبعد؟',
-        'AVAILABILITY_SOURCE_ERROR': 'تعذر التحقق من المواعيد الآن بسبب مشكلة تقنية. يرجى المحاولة لاحقاً.',
-        'MISSING_REQUIRED_FIELDS': _fb_missing_required,
-        'PATIENT_DATA_CONFIRMATION_REQUIRED': None,
-        'NEW_BOOKING_STARTED': _fallback_new_booking_started(),
-        'CONFIRMATION_REQUIRED': _fallback_confirmation_required(),
-        'CONFIRMATION_EXPIRED': 'انتهت مدة تأكيد الموعد لذلك أحتاج أتحقق من توفره مرة ثانية قبل تثبيت الحجز.',
-        'HANDOFF_REQUIRED': 'بحولك لموظف الاستقبال عشان يساعدك',
-        'BUSINESS_HOURS_VIOLATION': 'الموعد المطلوب خارج ساعات عمل العيادة. اختر وقتاً داخل ساعات الدوام.',
-        'APPOINTMENT_CREATION_FAILED': 'ما قدرت أتمم الحجز حالياً. أقدر أعيد المحاولة.',
-        # Duplicate keys in the JS literal — these later definitions WIN (identically in JS and here):
-        'REQUESTED_TIME_NOT_AVAILABLE': 'الوقت المطلوب غير متاح حاليًا. أقدر أعرض لك أوقاتًا بديلة.',
-        'DOCTOR_NOT_WORKING_THAT_DAY': 'الدكتور ما يشتغل في هذا اليوم. أقدر أبحث لك عن يوم بديل.',
-        'FULLY_BOOKED': 'الدكتور يعمل في هذا اليوم لكن الأوقات محجوزة. أقدر أبحث لك عن يوم بديل.',
-        'NO_AVAILABLE_SLOTS': 'الدكتور يعمل في هذا اليوم، لكن لا توجد مواعيد متاحة مؤكدة حاليًا. أقدر أبحث لك عن يوم بديل.',
-        'BOOKING_RECOVERY_EXPLANATION': _fallback_booking_recovery(),
-        'CONVERSATION_ONLY': None,  # DeepSeek #2 MUST generate this
-    }
-
-    deterministic_fallback_reply = (
-        fallback_by_code.get(response_code) or None
-    ) if isinstance(response_code, str) else None
-
     def _current_agent_reply():
         try:
             vr = _read_node(ctx, 'validate_repaired')
@@ -1173,6 +983,14 @@ def build_response(ctx: dict) -> dict:
             return reply or None
         except Exception:
             return None
+
+    # ── Deterministic fallback replies: REMOVED 2026-09-17 ────────────────────
+    # This block held one prewritten Arabic sentence per response code, consumed
+    # only by Extract Single Agent Reply (since deleted). In the n8n graph it was
+    # a safety net handed to the reply composer; the composer now receives the
+    # fact catalog and writes the reply itself, so a canned sentence here would be
+    # a rigid reply waiting to leak into production. response_code is still
+    # returned below for the audit trail.
 
     current_agent_reply = _current_agent_reply()
     current_reply_trimmed = _js_string(_js_or(current.get('agent_reply'), '')).strip()
@@ -1198,7 +1016,6 @@ def build_response(ctx: dict) -> dict:
         'patient_phone': _js_string(_js_or(execution.get('patient_phone'), '')).strip() or None,
         'missing_human_fields': missing_human,
         'next_best_missing_human_field': next_best_missing,
-        'deterministic_fallback_reply': deterministic_fallback_reply,
         'confirmation_target': confirmation_target,
         'contract': contract,
     }

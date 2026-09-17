@@ -28,11 +28,37 @@ def test_saved_false_without_retry_is_failure():
     assert out["reply_text"].startswith("تعذر حفظ")
 
 
-def test_guard_override_precedence():
+def test_model_reply_outranks_legacy_guard_override():
+    """The model owns the conversation.
+
+    `_reply_guard.override` used to outrank the model-authored reply. apply_reply_guard
+    no longer writes patient-facing text at all, and this ordering makes the guarantee
+    structural: even if the field carries text again, the model's reply wins.
+    """
     guard = {"_reply_guard": {"override": "تم الحجز بنجاح يا فلان ✅"}}
     out = build_final_response(NORMALIZED, "m-1", {"saved": True}, {"saved": True}, guard, "الرد المرسل", POLICY_OUT, "t")
+    assert out["reply_text"] == "الرد المرسل"
+    assert out["_debug"]["deterministic_override"] is False
+
+
+def test_guard_override_is_used_only_when_there_is_no_model_reply():
+    guard = {"_reply_guard": {"override": "تم الحجز بنجاح يا فلان ✅"}}
+    out = build_final_response(NORMALIZED, "m-1", {"saved": True}, {"saved": True}, guard, None, POLICY_OUT, "t")
     assert out["reply_text"] == "تم الحجز بنجاح يا فلان ✅"
-    assert out["_debug"]["deterministic_override"] is True
+
+
+def test_apply_reply_guard_produces_no_patient_text():
+    """apply_reply_guard is detection-only now — it must never generate a reply."""
+    from app.core.reply_guard import apply_reply_guard
+
+    for code in ("APPOINTMENT_CREATED", "CANCEL_COMPLETED", "RESCHEDULE_COMPLETED",
+                 "IDEMPOTENT_REPLAY", "CONFIRMATION_EXPIRED", "AVAILABILITY_SOURCE_ERROR"):
+        policy = {"response_code": code, "system_decision": {"response_code": code}}
+        out = apply_reply_guard({"response_policy": policy})
+        meta = out["_reply_guard"]
+        assert meta["override"] is None, f"{code} must not produce reply text"
+        assert meta["code"] == code
+        assert "agent_reply" not in out, f"{code} must not inject agent_reply"
 
 
 def test_rendered_reply_fallback_and_metadata():
