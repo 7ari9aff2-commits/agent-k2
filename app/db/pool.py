@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -31,24 +32,28 @@ class DatabasePool:
 
     def __init__(self) -> None:
         self.pool: Optional[asyncpg.Pool] = None
+        self._lock = asyncio.Lock()
 
     async def get_pool(self) -> asyncpg.Pool:
+        # Locked: two concurrent first callers used to race create_pool and leak a pool.
         if self.pool is None:
-            kwargs = dict(
-                dsn=settings.DATABASE_URL,
-                min_size=settings.DB_POOL_MIN,
-                max_size=settings.DB_POOL_MAX,
-                command_timeout=30,
-                init=_init_connection,
-            )
-            if settings.DB_SSL:
-                import ssl
+            async with self._lock:
+                if self.pool is None:
+                    kwargs = dict(
+                        dsn=settings.DATABASE_URL,
+                        min_size=settings.DB_POOL_MIN,
+                        max_size=settings.DB_POOL_MAX,
+                        command_timeout=30,
+                        init=_init_connection,
+                    )
+                    if settings.DB_SSL:
+                        import ssl
 
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                kwargs["ssl"] = ctx
-            self.pool = await asyncpg.create_pool(**kwargs)
+                        ctx = ssl.create_default_context()
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                        kwargs["ssl"] = ctx
+                    self.pool = await asyncpg.create_pool(**kwargs)
         return self.pool
 
     async def close(self) -> None:

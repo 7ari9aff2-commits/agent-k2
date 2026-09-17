@@ -161,6 +161,8 @@ def build_reply_context(
     clinic_profile = _selected(clinic_context, (
         "clinic_name", "clinic_timezone", "timezone", "persona", "working_hours",
         "doctor_count", "address", "phone", "location_config",
+        # actual Get Clinic Context column aliases (queries.py:56-59)
+        "clinic_phone", "clinic_location_config",
     ))
     if clinic_profile:
         facts.append(_fact("clinic.profile", "clinic_profile", "database", clinic_profile))

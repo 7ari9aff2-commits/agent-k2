@@ -76,7 +76,7 @@ def _handoff_kwargs(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Filter the handoff child input to its declared schema fields."""
     allowed = {"clinic_id", "conversation_id", "patient_id", "channel_type", "channel_id",
                "handoff_reason", "reason_code", "reason_note", "correlation_id",
-               "source_message_id", "context_snapshot", "metadata"}
+               "source_message_id", "context_snapshot", "metadata", "priority"}
     return {k: v for k, v in (payload or {}).items() if k in allowed}
 
 
@@ -414,6 +414,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     exec_cancel_result: Dict[str, Any] = {}
     exec_reschedule_result: Dict[str, Any] = {}
     claim_result: Dict[str, Any] = {}
+    claim_applied: Dict[str, Any] = {}
     claim_input: Dict[str, Any] = {}
     if not conditions_pre.if_non_scheduling_turn_v19(decision):
         # ── L43 Execution Transition Guard (Deterministic) ─────────────────────
@@ -452,36 +453,66 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             decision = claim_applied
 
         # ── L52-55 executors ────────────────────────────────────────────────────
+        # try/except: a granted claim with a crashed executor must not strand the
+        # ledger IN_PROGRESS — close it FAILED_FINAL before propagating.
         exec_result: Optional[Dict[str, Any]] = None
-        if conditions_post.if_approved_create_action(decision):
-            exec_input = stages_post.prepare_execute_input({
-                "conversation_state": state_row, "resolve_booking_ids": booking_ids_result,
-                "apply_resolved_booking_ids": apply_ids_result, "system_orchestrator": decision,
-                "normalize_validate": normalized})
-            exec_ctx = stages_post.prepare_execute_context(exec_input, {
-                "normalize_validate": normalized, "system_orchestrator": decision,
-                "conversation_state": state_row})
-            exec_create_result = await repository.execute_approved_create_appointment({
-                "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {})})
-            exec_result = exec_create_result
-        elif conditions_post.if_approved_cancel_action(decision):
-            exec_cancel_result = await repository.execute_approved_cancel_appointment({
-                "decision": decision, "normalized": normalized, "claim": claim_result})
-            exec_result = exec_cancel_result
-        elif conditions_post.if_approved_reschedule_action(decision):
-            exec_reschedule_result = await repository.execute_approved_reschedule_appointment({
-                "decision": decision, "normalized": normalized, "claim": claim_result})
-            exec_result = exec_reschedule_result
+        try:
+            if conditions_post.if_approved_create_action(decision):
+                exec_input = stages_post.prepare_execute_input({
+                    "conversation_state": state_row, "resolve_booking_ids": booking_ids_result,
+                    "apply_resolved_booking_ids": apply_ids_result, "system_orchestrator": decision,
+                    "normalize_validate": normalized})
+                exec_ctx = stages_post.prepare_execute_context(exec_input, {
+                    "normalize_validate": normalized, "system_orchestrator": decision,
+                    "conversation_state": state_row,
+                    "resolve_booking_ids": booking_ids_result,
+                    "apply_resolved_booking_ids": apply_ids_result,
+                    "clinic_context": clinic_context})
+                exec_create_result = await repository.execute_approved_create_appointment({
+                    "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {})})
+                exec_result = exec_create_result
+            elif conditions_post.if_approved_cancel_action(decision):
+                exec_cancel_result = await repository.execute_approved_cancel_appointment({
+                    "decision": decision, "normalized": normalized, "claim": claim_result})
+                exec_result = exec_cancel_result
+            elif conditions_post.if_approved_reschedule_action(decision):
+                exec_reschedule_result = await repository.execute_approved_reschedule_appointment({
+                    "decision": decision, "normalized": normalized, "claim": claim_result})
+                exec_result = exec_reschedule_result
+        except Exception:
+            if claim_applied.get("operation_id"):
+                try:
+                    await repository.finalize_operation({
+                        "finalize_clinic_id": normalized.get("clinic_id"),
+                        "finalize_operation_id": claim_applied.get("operation_id"),
+                        "finalize_status": "FAILED_FINAL",
+                        "finalize_mutation_status": "UNKNOWN",
+                    })
+                except Exception:
+                    logger.exception("claim-failure finalize also failed — ledger row left for reconcile")
+            raise
 
         # ── L56-59 Validate Child Envelope → Finalize → Merge Completion ───────
+        # Wiring (fixed 2026-09-17): the nodes read system_orchestrator /
+        # normalize_validate / apply_operation_claim — the previous call passed
+        # "normalized"/"decision", so every successful mutation was finalized
+        # CHILD_CONTRACT_INVALID → INCONCLUSIVE and the patient was told the
+        # operation failed. merge_operation_completion consumes the FINALIZE row.
         if exec_result is not None:
             execution_id = normalized.get("source_event_id") or _correlation_of(normalized)
             envelope = stages_post.validate_child_envelope(exec_result, {
-                "normalized": normalized, "decision": decision}, execution_id=execution_id)
+                "system_orchestrator": decision, "normalize_validate": normalized,
+                "apply_operation_claim": claim_applied}, execution_id=execution_id)
             finalize_input = stages_post.prepare_operation_finalize_input(envelope, {
-                "claim_input": claim_input, "normalized": normalized}, execution_id=execution_id)
+                "normalize_validate": normalized}, execution_id=execution_id)
             finalized = await repository.finalize_operation(finalize_input)
-            merge_completion_result = stages_post.merge_operation_completion(envelope, decision)
+            merge_completion_result = stages_post.merge_operation_completion(envelope, finalized or {})
+            # n8n parity: downstream nodes read system_decision/booking_context/
+            # confirmation_target from the System Orchestrator item — carry them
+            # onto the merged completion item.
+            for _carry in ("system_decision", "booking_context", "confirmation_target", "response_code"):
+                if merge_completion_result.get(_carry) is None and (decision or {}).get(_carry) is not None:
+                    merge_completion_result[_carry] = decision.get(_carry)
             decision = merge_completion_result
 
     # ── L60 Response Policy (Deterministic) ────────────────────────────────────
@@ -517,7 +548,10 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     """Shared tail: persist confirmation → reply guard → reply extraction → audit/usage →
     handoff → state save with stale retry → log outgoing → Respond To Patient."""
     # ── L61 Persist Pending Confirmation (Deterministic) ───────────────────────
-    await repository.persist_pending_confirmation({"normalized": normalized, "decision": decision})
+    # Wiring (fixed 2026-09-17): the SQL node gates on a top-level response_code —
+    # the previous {"normalized", "decision"} envelope never provided it, so
+    # confirmations were never persisted (cancel flow downstream depends on this).
+    await repository.persist_pending_confirmation({"normalized": normalized, **(decision or {})})
 
     # ── L62 Reply Guard (Deterministic) — always runs, even when the caller
     # pre-extracted the reply (single-agent result phase): safety is not optional.
@@ -631,9 +665,17 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
             "normalized": normalized, "system_orchestrator": decision, "actions": actions,
             "normalize_validate": normalized})
         handoff_payload = (handoff_input or {}).get("handoff_input") or handoff_input or {}
-        handoff_result = await handoff_service.create_or_reuse_handoff(
-            handoff_service.HandoffChildInput(**_handoff_kwargs(handoff_payload)))
-        stages_post.restore_handoff_context(handoff_result, handoff_input)
+        # Divergence (2026-09-17): the ported Restore Handoff Context raises when the
+        # handoff RPC fails, which aborted the whole turn — the patient asking for a
+        # human got a 500 with no reply and no state save. The handoff failure is now
+        # contained: the reply and state save still happen, flagged in the audit.
+        try:
+            handoff_result = await handoff_service.create_or_reuse_handoff(
+                handoff_service.HandoffChildInput(**_handoff_kwargs(handoff_payload)))
+            stages_post.restore_handoff_context(handoff_result, handoff_input)
+        except Exception:
+            logger.exception("handoff failed — delivering the reply without the handoff link")
+            extracted["handoff_failed"] = True
     fresh_offer = await repository.read_fresh_offer_midturn({"normalized": normalized})
 
     # ── L71-77 Build Persistent Conversation State → save with stale retry ─────

@@ -344,6 +344,11 @@ def recover_entities_from_tool_events(raw_text: str, tool_events: Optional[list]
         if service_id and not str(entities.get("service_id") or "").strip():
             entities["service_id"] = service_id
             changed = True
+        if name == "Get_My_Appointments":
+            reference = str(args.get("booking_number") or "").strip()
+            if reference and not str(entities.get("reference") or "").strip():
+                entities["reference"] = reference
+                changed = True
     if not changed:
         return str(raw_text or "")
     parsed["entities"] = entities
