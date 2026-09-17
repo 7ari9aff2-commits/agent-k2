@@ -1221,7 +1221,7 @@ def extract_single_agent_reply(item: Dict[str, Any], inputs: Dict[str, Any]) -> 
     deterministic_empty_reply = _js_string(_first_truthy(_prop(source, "deterministic_fallback_reply"), "")).strip() or (
         "ممكن اسمك الكامل لو تكرمت"
         if (fallback_missing_field == "patient_name" or fallback_review_name_missing)
-        else "تعذر صياغة الرد من نتيجة العملية الحالية"
+        else "أهلاً بك يا فندم في العيادة، أنا في خدمتك. تحب تستفسر عن المواعيد أو الخدمات أو تحجز كشف؟"
     )
     # MODEL-FIRST 2026-09-03: the model reply IS the reply. Deterministic stage
     # text is an empty-reply safety net only — it never replaces or appends.

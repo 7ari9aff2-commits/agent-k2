@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.core.security import verify_internal_token
-from app.core import agent_output, contract_adapter, gates, llm_safety, orchestrator, reply_guard, response_policy
+from app.core.config import settings
+from app.core import agent_output, contract_adapter, gates, grounding, llm_safety, orchestrator, reply_guard, response_policy
 from app.db import repository
 from app.pipeline import normalize as normalize_mod
 from app.pipeline import patient_fields
@@ -287,7 +288,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         return await _respond_tail(normalized, state_row, state_data, policy, {},
                                    persona_context, {}, extracted_single,
                                    extracted_single, clinic_context, raw_llm_output,
-                                   pre_extracted=extracted_single)
+                                   pre_extracted=extracted_single, faq_result=faq_result)
     else:
         # [false] → Normalize Agent Output (Deterministic)
         normalized_agent_output = agent_output.normalize_agent_output({
@@ -429,7 +430,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
 
     return await _respond_tail(normalized, state_row, state_data, policy, decision,
                                persona_context, repaired_result, normalized_agent_output,
-                               normalized_agent, clinic_context, raw_llm_output)
+                               normalized_agent, clinic_context, raw_llm_output,
+                               faq_result=faq_result)
 
 
 async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], state_data: Dict[str, Any],
@@ -437,7 +439,8 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
                         repaired_result: Dict[str, Any], normalized_agent_output: Dict[str, Any],
                         normalized_agent: Dict[str, Any], clinic_context: Optional[Dict[str, Any]] = None,
                         raw_llm_output: Optional[str] = None,
-                        pre_extracted: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                        pre_extracted: Optional[Dict[str, Any]] = None,
+                        faq_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Shared tail: persist confirmation → reply guard → reply extraction → audit/usage →
     handoff → state save with stale retry → log outgoing → Respond To Patient."""
     # ── L61 Persist Pending Confirmation (Deterministic) ───────────────────────
@@ -463,6 +466,24 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
             "conversation_state": state_row, "persona_builder": persona_context,
             "normalize_agent_output": normalized_agent_output, "validate_repaired_contract": repaired_result})
         rendered_reply = (extracted or {}).get("rendered_reply")
+
+    # ── Grounding Verifier (docs/agent_upgrade_design.md P1.1) ─────────────────
+    rendered_reply, ground_report = grounding.ground_reply(
+        rendered_reply,
+        extracted=extracted,
+        sources={
+            "normalized": normalized,
+            "state": state_data,
+            "clinic": clinic_context or {},
+            "policy": policy,
+            "decision": decision,
+            "repaired": repaired_result,
+            "faq": faq_result or {},
+        },
+        mode=getattr(settings, "GROUNDING_MODE", "enforce"),
+    )
+    if extracted is not None and rendered_reply:
+        extracted["rendered_reply"] = rendered_reply
 
     # ── L65-66 Derive Actions + audit + AI usage ───────────────────────────────
     actions = contract_adapter.derive_actions({

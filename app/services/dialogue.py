@@ -138,19 +138,9 @@ def build_user_message(
 # ── Check Doctor Availability tool (n8n toolWorkflow node, verbatim description) ──
 AVAILABILITY_TOOL_DESCRIPTION = (
     "Check available appointment slots for a doctor on a date in the clinic local calendar. "
-    "CALL ONLY when the patient explicitly asks about available times/days or states a specific day "
-    "AND the doctor is known. A plain booking request with no day and no time (e.g. \"عايز احجز عند الدكتور X\", "
-    "\"ابغى موعد\") is NOT a call trigger: never check availability for it, never use today's date for it — "
-    "ask which day suits the patient naturally. Never answer with 'I will check' or 'one moment' instead of "
-    "calling it when a day was asked. If the patient asks for any available time without naming a day "
-    "(e.g. 'أي وقت متاح', 'احجز لي أي وقت', 'أقرب موعد'), use today's clinic-local date from "
-    "context.local_time.date - the system searches the nearby days and returns the nearest verified slots. "
-    "doctor_id = the doctor name exactly as the patient wrote it, or a doctor id you already have. "
-    "requested_date = ISO YYYY-MM-DD. The subworkflow resolves the doctor name and returns verified slots: "
-    "present up to 4 (day and time) and ask which one. Never announce unavailability for a day the patient "
-    "did not name; when the checked day has no slots, present the nearest verified slots the subworkflow "
-    "returned. On error or zero verified slots, say honestly that nothing verified was found or the check "
-    "failed - never invent dates, times, or slots, and never mention tools or IDs."
+    "CALL whenever the patient explicitly asks about available times/days or states a specific day "
+    "or wants to book/reschedule an appointment. Returns real available slots from the clinic database. "
+    "Never invent dates, times, or slots."
 )
 
 AVAILABILITY_TOOL = {
@@ -178,6 +168,77 @@ AVAILABILITY_TOOL = {
         },
     },
 }
+
+FAQ_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Search_Clinic_FAQ",
+        "description": (
+            "Search the clinic knowledge base and FAQ for verified answers regarding "
+            "clinic working hours, address, location, prices, accepted insurances, "
+            "appointment policies, preparation instructions, and doctor credentials. "
+            "Always use this tool when answering patient questions about the clinic."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The specific question or search query in Arabic",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+SERVICES_DOCTORS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Get_Clinic_Services_And_Doctors",
+        "description": (
+            "Get the verified list of active doctors, their specialties, branches, "
+            "and the clinic service catalog with official prices. Call this when the "
+            "patient asks who the doctors are, what specialties exist, or what services and prices are offered."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Optional category filter, or null for all",
+                },
+            },
+        },
+    },
+}
+
+PATIENT_APPOINTMENTS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "Get_My_Appointments",
+        "description": (
+            "Retrieve the patient's existing or upcoming appointments at this clinic. "
+            "Call this when the patient asks to view, reschedule, or cancel their appointment."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "booking_number": {
+                    "type": "string",
+                    "description": "Optional booking number or appointment ID if mentioned by the patient",
+                },
+            },
+        },
+    },
+}
+
+RECEPTIONIST_TOOLS = [
+    AVAILABILITY_TOOL,
+    FAQ_TOOL,
+    SERVICES_DOCTORS_TOOL,
+    PATIENT_APPOINTMENTS_TOOL,
+]
 
 
 # ── DeepSeek Model node (primary) ───────────────────────────────────────────────
@@ -210,9 +271,11 @@ async def call_primary_model(user_message: str, tools: Optional[list] = None) ->
 
 
 async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any]) -> str:
-    """Agent turn loop: the model may call the Check_Doctor_Availability tool (the ONLY
-    availability path), mirroring the n8n agent + toolWorkflow wiring. Bounded loop."""
+    """Agent turn loop: the model may call reception tools (availability, FAQ, catalog, appointments),
+    grounding every fact in Supabase data. Bounded loop."""
     from app.services.availability import check_available_slots
+    from app.services import faq as faq_service
+    from app.db import repository
 
     messages: list = [
         {"role": "system", "content": load_system_message()},
@@ -230,14 +293,13 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
         messages.append(message)
         for tool_call in tool_calls:
             fn = (tool_call.get("function") or {})
-            if fn.get("name") != "Check_Doctor_Availability":
-                tool_result: Any = {"error": "UNKNOWN_TOOL"}
-            else:
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
+            fn_name = fn.get("name")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
 
+            if fn_name == "Check_Doctor_Availability":
                 # Resolve doctor_id with fallback to context/state/clinic
                 doctor_id = args.get("doctor_id") or context.get("doctor_id")
                 if not doctor_id:
@@ -268,8 +330,41 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
                     }
                     try:
                         tool_result = await check_available_slots(tool_input)
-                    except Exception as exc:  # the subworkflow's RPC error item
+                    except Exception as exc:
                         tool_result = {"error": str(exc)}
+
+            elif fn_name == "Search_Clinic_FAQ":
+                q = args.get("query") or args.get("question") or ""
+                try:
+                    faq_res = await faq_service.search_clinic_faq(
+                        faq_service.FaqSearchInput(clinic_id=context.get("clinic_id"), question=q)
+                    )
+                    tool_result = faq_res or {"results": [], "count": 0}
+                except Exception as exc:
+                    tool_result = {"error": str(exc), "results": []}
+
+            elif fn_name == "Get_Clinic_Services_And_Doctors":
+                c = context.get("clinic_context") or {}
+                b = context.get("persona_context") or {}
+                tool_result = {
+                    "clinic_name": c.get("clinic_name"),
+                    "doctors": c.get("doctor_directory") or [],
+                    "services": (b.get("service_facts") or {}).get("catalog") or [],
+                    "branches": c.get("branch_directory") or [],
+                }
+
+            elif fn_name == "Get_My_Appointments":
+                try:
+                    appts = await repository.get_patient_appointments(
+                        context.get("clinic_id"),
+                        context.get("patient_id"),
+                        args.get("booking_number")
+                    )
+                    tool_result = {"appointments": appts, "count": len(appts)}
+                except Exception as exc:
+                    tool_result = {"error": str(exc), "appointments": []}
+            else:
+                tool_result = {"error": "UNKNOWN_TOOL"}
 
             messages.append({
                 "role": "tool",
@@ -294,7 +389,7 @@ async def _chat_messages(messages: list, *, with_tools: bool = True, force_json:
         "reasoning": {"enabled": False, "max_tokens": 2048},
     }
     if with_tools:
-        body["tools"] = [AVAILABILITY_TOOL]
+        body["tools"] = RECEPTIONIST_TOOLS
         body["tool_choice"] = "auto"
     if force_json or not with_tools:
         body["response_format"] = {"type": "json_object"}

@@ -58,6 +58,7 @@ __all__ = [
     "insert_ai_request_usage",
     "log_outgoing_message",
     "save_conversation_state_with_retry",
+    "get_patient_appointments",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1083,3 +1084,31 @@ async def save_conversation_state_with_retry(normalized: dict, save_body: dict) 
         # keep it on the retry envelope unless the RPC itself returned that column.
         retry.setdefault("semantic_merge_conflict", semantic_conflict)
     return {"initial": initial, "retry": retry}
+
+
+async def get_patient_appointments(
+    clinic_id: Optional[str],
+    patient_id: Optional[str],
+    booking_number: Optional[str] = None,
+) -> list[dict]:
+    """Retrieve active/upcoming appointments for a patient in this clinic."""
+    if not clinic_id or not patient_id:
+        return []
+    from app.db.pool import get_pool
+
+    pool = await get_pool()
+    sql = """
+        SELECT a.id::text, a.booking_number, a.scheduled_at::text, a.appointment_status,
+               d.name as doctor_name, s.name as service_name
+        FROM appointments a
+        LEFT JOIN doctors d ON d.id = a.doctor_id
+        LEFT JOIN services s ON s.id = a.service_id
+        WHERE a.clinic_id = $1::uuid AND a.patient_id = $2::uuid AND a.deleted_at IS NULL
+          AND a.appointment_status IN ('scheduled', 'confirmed')
+          AND ($3::text IS NULL OR a.booking_number = $3::text OR a.id::text = $3::text)
+        ORDER BY a.scheduled_at ASC
+        LIMIT 5;
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(sql, _uuid(clinic_id), _uuid(patient_id), booking_number)
+    return [dict(r) for r in rows] if rows else []

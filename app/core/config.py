@@ -38,5 +38,8 @@ class Settings(BaseSettings):
     # Availability tool sub-workflow fallback (n8n toolWorkflow node: Check Doctor Availability)
     N8N_BASE_URL: Optional[str] = None
 
+    # Grounding verifier (docs/agent_upgrade_design.md P1.1): enforce | audit | off
+    GROUNDING_MODE: str = "enforce"
+
 
 settings = Settings()

@@ -132,12 +132,33 @@ def contract_v4_to_v3(contract_v4: dict, extra: dict | None = None) -> dict:
             parsed = None
 
     if not _truthy(parsed) or not isinstance(parsed, dict) or parsed.get('schema_version') != 'k2.dialogue.v4':
-        # JS: parsed ? 'not_v4' : 'unparseable' — a JSON document that parses to a
-        # falsy value (0/''/false/null) reports 'unparseable'; keep the quirk.
-        reason = 'not_v4' if _truthy(parsed) else 'unparseable'
-        out = dict(item)
-        out['_adapter'] = {'action': 'passthrough', 'reason': reason}
-        return out
+        if isinstance(parsed, dict) and parsed.get('reply'):
+            parsed.setdefault('schema_version', 'k2.dialogue.v4')
+        else:
+            raw_text = None
+            for k in _CANDIDATE_KEYS:
+                cand = item.get(k)
+                if isinstance(cand, str) and cand.strip() and not cand.strip().startswith('{'):
+                    raw_text = cand.strip()
+                    break
+            if raw_text and not _truthy(parsed):
+                parsed = {
+                    'schema_version': 'k2.dialogue.v4',
+                    'reply': raw_text,
+                    'turn': {'intent': 'other', 'relation_to_previous_turn': 'none'},
+                    'confidence': 0.9,
+                    'ambiguous': [],
+                    'confirmation': {'intent': 'none'},
+                    'selection': {'kind': 'none', 'rank': None},
+                    'entities': {},
+                    'operation_proposal': {'type': 'none', 'requested': False},
+                    'escalate': None
+                }
+            else:
+                reason = 'not_v4' if _truthy(parsed) else 'unparseable'
+                out = dict(item)
+                out['_adapter'] = {'action': 'passthrough', 'reason': reason}
+                return out
 
     e = _dict(parsed.get('entities'))
     ref = e.get('reference').strip() if isinstance(e.get('reference'), str) else ''

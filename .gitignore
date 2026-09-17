@@ -40,3 +40,10 @@ tools/inspect_railway.py
 tools/print_channels.py
 tools/print_vars.py
 tools/test_live_endpoint.py
+tools/check_db_n8n.py
+tools/get_tg_workflow.py
+tools/inspect_tg_nodes.py
+tools/inspect_wa_node.py
+tools/list_n8n_creds.py
+tools/n8n_mcp_client.py
+tools/search_n8n_workflows.py
