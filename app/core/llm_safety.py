@@ -36,6 +36,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from app.core.js_semantics import obj_or_empty as _obj_or_empty
 
 # ---------------------------------------------------------------------------
 # JS-semantics shims (private to this module)
@@ -153,13 +154,6 @@ def _first_truthy(*values: Any) -> Any:
         if _js_truthy(v):
             return v
     return values[-1] if values else None
-
-
-def _obj_or_empty(value: Any) -> Any:
-    """JS `x && typeof x === 'object' ? x : {}` (dict/list pass, including [])."""
-    if isinstance(value, (dict, list)):
-        return value
-    return {}
 
 
 def _prop(obj: Any, key: str) -> Any:

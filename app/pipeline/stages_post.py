@@ -28,6 +28,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from app.core.js_semantics import is_finite_num as _is_finite_num, obj_or_empty as _obj_or_empty
 
 # ---------------------------------------------------------------------------
 # JS-semantics shims (private to this module; same contracts as app/core/llm_safety)
@@ -158,13 +159,6 @@ def _first_truthy(*values: Any) -> Any:
     return values[-1] if values else None
 
 
-def _obj_or_empty(value: Any) -> Any:
-    """JS `x && typeof x === 'object' ? x : {}` (dict/list pass, including [])."""
-    if isinstance(value, (dict, list)):
-        return value
-    return {}
-
-
 def _prop(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, _UNDEFINED)
@@ -272,10 +266,6 @@ def _natural_time_text_063(value: Any) -> Optional[str]:
     return _js_string(hh) + ":" + mi + " " + ("\ufffd\u0085ساءً" if h >= 12 else "صباحًا")
 
 
-def _is_finite_num(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
 def _is_business_envelope(value: Any) -> bool:
     if not _js_truthy(value) or not isinstance(value, dict):
         return False
@@ -321,8 +311,6 @@ def _normalize_location(value: Any) -> Optional[Dict[str, Any]]:
 # Replies are authored by the model from the fact catalog; see
 # app/core/response_context.py and dialogue.compose_patient_reply.
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------

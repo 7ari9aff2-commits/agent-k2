@@ -26,6 +26,7 @@ n8n/packages/workflow/src/node-parameters/filter-parameter.ts):
 from __future__ import annotations
 
 from typing import Any, Dict
+from app.core.js_semantics import string_equals as _string_equals
 
 _UNDEFINED = object()
 
@@ -43,11 +44,6 @@ def _bool_true(value: Any) -> bool:
     mode and is treated as False here (upstream ports guarantee booleans).
     """
     return value is True
-
-
-def _string_equals(left: Any, right: str) -> bool:
-    """n8n v2 string operator 'equals' (caseSensitive: true): left === right."""
-    return isinstance(left, str) and left == right
 
 
 def _decision_allowed_value(item: Dict[str, Any]) -> Any:

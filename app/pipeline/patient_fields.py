@@ -32,36 +32,13 @@ Pure function: no I/O, no logging, stdlib only.
 """
 
 import re
+from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, js_len as _js_len, js_or as _js_or, truthy as _truthy, u16_index_of as _u16_index_of
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
 
 _JS_WS_INNER = r'\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
 _JS_S = '[' + _JS_WS_INNER + ']'  # JS \s character class (Python \s differs on \ufeff / \x1c-\x1f \x85)
-
-
-def _dict(value):
-    """Property-access coercion: non-object values read as empty objects (JS never throws here)."""
-    return value if isinstance(value, dict) else {}
-
-
-def _truthy(value):
-    """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
-    if isinstance(value, float) and value != value:  # NaN
-        return False
-    if isinstance(value, (dict, list)):
-        return True
-    return bool(value)
-
-
-def _js_or(*values):
-    """JS ``a || b || c`` chain: first JS-truthy value, else the last value (or None)."""
-    if not values:
-        return None
-    for v in values[:-1]:
-        if _truthy(v):
-            return v
-    return values[-1]
 
 
 def _js_string(value):
@@ -95,16 +72,6 @@ def _js_string(value):
 def _js_trim(s):
     """JS String.prototype.trim() — the JS WhiteSpace + LineTerminator set (differs from Python strip())."""
     return s.strip('\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff')
-
-
-def _js_len(s):
-    """JS str .length — UTF-16 code units (astral code points count as 2)."""
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in s)
-
-
-def _cp_to_u16(s, cp_index):
-    """Convert a Python code-point index into the JS UTF-16 code-unit index."""
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in s[:cp_index])
 
 
 def _u16_slice(s, start, end=None):
@@ -141,12 +108,6 @@ def _u16_slice(s, start, end=None):
             out.append(ch)
         units += w
     return ''.join(out)
-
-
-def _u16_index_of(s, sub):
-    """JS String.prototype.indexOf — UTF-16 code-unit index, -1 when absent."""
-    pos = s.find(sub)
-    return -1 if pos < 0 else _cp_to_u16(s, pos)
 
 
 _INT_HEAD_RE = re.compile('[' + _JS_WS_INNER + r']*([+-]?[0-9]+)')

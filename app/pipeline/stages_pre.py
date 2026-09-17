@@ -41,6 +41,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+from app.core.js_semantics import is_finite_num as _is_finite_num
 
 # ---------------------------------------------------------------------------
 # JS-semantics shims (private to this module; same contracts as app/pipeline/stages_post)
@@ -202,10 +203,6 @@ def _dig(obj: Any, *keys: str) -> Any:
 
 def _has_key(obj: Any, key: str) -> bool:
     return isinstance(obj, dict) and obj.get(key, _UNDEFINED) is not _UNDEFINED
-
-
-def _is_finite_num(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _int_if_integral(value: Any) -> Any:
@@ -448,7 +445,6 @@ _CONFIRM_FAST_AFFIRM_RE = _js_re(r"^(?:نعم|ايه|اه|اها|أه|أها|ا�
 _MESSAGE_ACTION_SIGNAL_RE = _js_re(r"(?:احجز|حجز|موعد|دكتور|طبيب|مواعيد|متاح|متاحة|سعر|اسعار|أسعار|خدمة|خدمات|الغاء|إلغاء|تعديل|متابعة|كشف|بكرة|بكره|باچر|اليوم|الاحد|الأحد|الاثنين|الثلاثاء|الاربعاء|الأربعاء|الخميس|الجمعة|السبت|book|appointment|doctor|physician|available|price|cost|service|cancel|reschedule|today|tomorrow)")
 
 _DOCTOR_INFO_REQUEST_RE = _js_re(r"(?:تخصص|اختصاص|مجال|مين\s+(?:الدكاتره|الدكاترة|الاطباء|الأطباء)|اسماء\s+(?:الدكاتره|الدكاترة|الاطباء|الأطباء)|دكاتره\s+العياده|دكاترة\s+العيادة|specialt)")
-
 
 
 def _clean_text(value: Any) -> str:

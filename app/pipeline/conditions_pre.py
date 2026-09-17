@@ -34,6 +34,7 @@ leftValue expressions are reproduced verbatim in each docstring.
 from __future__ import annotations
 
 from typing import Any, Dict
+from app.core.js_semantics import string_equals as _string_equals
 
 _UNDEFINED = object()
 
@@ -47,11 +48,6 @@ def _prop(item: Dict[str, Any], key: str) -> Any:
 def _bool_true(value: Any) -> bool:
     """n8n v2 boolean operator 'true' under strict validation: left === True."""
     return value is True
-
-
-def _string_equals(left: Any, right: str) -> bool:
-    """n8n v2 string operator 'equals' (caseSensitive: true): left === right."""
-    return isinstance(left, str) and left == right
 
 
 def if_check_duplicate_message(item: Dict[str, Any]) -> bool:

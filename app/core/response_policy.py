@@ -63,6 +63,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
+from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _first_not_none, js_or as _js_or
 
 
 class ResponsePolicyCtx(TypedDict, total=False):
@@ -89,10 +90,6 @@ class ResponsePolicyCtx(TypedDict, total=False):
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
 
-def _dict(value):
-    """Property-access coercion: non-object values read as empty objects (JS never throws here)."""
-    return value if isinstance(value, dict) else {}
-
 
 def _truthy(value):
     """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
@@ -101,24 +98,6 @@ def _truthy(value):
     if isinstance(value, (dict, list)):
         return True
     return bool(value)
-
-
-def _js_or(*values):
-    """JS ``a || b || c`` chain: first JS-truthy value, else the last value (or None)."""
-    if not values:
-        return None
-    for v in values[:-1]:
-        if _truthy(v):
-            return v
-    return values[-1]
-
-
-def _first_not_none(*values):
-    """JS ``a ?? b ?? c`` chain: first value that is not null/undefined."""
-    for v in values:
-        if v is not None:
-            return v
-    return None
 
 
 def _js_string(value):

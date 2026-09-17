@@ -70,6 +70,7 @@ import math
 import re
 import time
 from datetime import datetime, timezone
+from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _first_not_none, iso_from_ms as _iso_from_ms, js_is_integer as _js_is_integer, js_or as _js_or
 
 try:
     from zoneinfo import ZoneInfo
@@ -1263,10 +1264,6 @@ def _decide_state_table(inp, now_ts=None):
 
 # ── JS semantics shims (String() / Number() / truthiness / || / Date.parse) ──
 
-def _dict(value):
-    """Property-access coercion: non-object values read as empty objects (JS never throws here)."""
-    return value if isinstance(value, dict) else {}
-
 
 def _truthy(value):
     """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
@@ -1275,24 +1272,6 @@ def _truthy(value):
     if isinstance(value, (dict, list)):
         return True
     return bool(value)
-
-
-def _js_or(*values):
-    """JS ``a || b || c`` chain: first JS-truthy value, else the last value (or None)."""
-    if not values:
-        return None
-    for v in values[:-1]:
-        if _truthy(v):
-            return v
-    return values[-1]
-
-
-def _first_not_none(*values):
-    """JS ``a ?? b ?? c`` chain: first value that is not null/undefined."""
-    for v in values:
-        if v is not None:
-            return v
-    return None
 
 
 def _js_string(value):
@@ -1354,17 +1333,6 @@ def _number_or_zero(value):
     return 0 if math.isnan(n) else n
 
 
-def _js_is_integer(value):
-    """JS Number.isInteger()."""
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return True
-    if isinstance(value, float):
-        return value.is_integer()
-    return False
-
-
 def _utf16_code_units(s):
     """Code points as s.codePointAt(i) yields them while i walks UTF-16 units (JS loop semantics)."""
     units = []
@@ -1399,15 +1367,6 @@ def _date_parse_ms(value):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return calendar.timegm(dt.utctimetuple()) * 1000 + dt.microsecond // 1000
-
-
-def _iso_from_ms(ms):
-    """JS new Date(ms).toISOString() — always millisecond precision with a 'Z' suffix."""
-    try:
-        dt = datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None
-    return dt.strftime('%Y-%m-%dT%H:%M:%S') + '.%03dZ' % (ms % 1000)
 
 
 def _is_valid_timezone(value):

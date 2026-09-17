@@ -25,6 +25,7 @@ import re
 import time
 import unicodedata
 from datetime import datetime, timezone
+from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, is_finite as _is_finite, iso_from_ms as _iso_from_ms, js_len as _js_len, js_or as _js_or, truthy as _truthy
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
@@ -32,30 +33,6 @@ from datetime import datetime, timezone
 _JS_WS_INNER = r'\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
 _JS_S = '[' + _JS_WS_INNER + ']'  # JS \s character class (Python \s differs on \ufeff / \x1c-\x1f \x85)
 _WS_PLUS_RE = re.compile(_JS_S + '+')
-
-
-def _dict(value):
-    """Property-access coercion: non-object values read as empty objects (JS never throws here)."""
-    return value if isinstance(value, dict) else {}
-
-
-def _truthy(value):
-    """JS truthiness: {} and [] are truthy; NaN is falsy; 0/''/None/False are falsy."""
-    if isinstance(value, float) and value != value:  # NaN
-        return False
-    if isinstance(value, (dict, list)):
-        return True
-    return bool(value)
-
-
-def _js_or(*values):
-    """JS ``a || b || c`` chain: first JS-truthy value, else the last value (or None)."""
-    if not values:
-        return None
-    for v in values[:-1]:
-        if _truthy(v):
-            return v
-    return values[-1]
 
 
 def _prop(obj, key):
@@ -107,16 +84,6 @@ def _js_trim(s):
     return s.strip('\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff')
 
 
-def _js_len(s):
-    """JS str .length — UTF-16 code units (astral code points count as 2)."""
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in s)
-
-
-def _cp_to_u16(s, cp_index):
-    """Convert a Python code-point index into the JS UTF-16 code-unit index."""
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in s[:cp_index])
-
-
 def _u16_slice(s, start, end=None):
     """JS String.prototype.slice(start, end) — indexes are UTF-16 code units.
 
@@ -157,13 +124,6 @@ def _u16_last_index_of(s, sub):
     """JS String.prototype.lastIndexOf — UTF-16 code-unit index, -1 when absent."""
     pos = s.rfind(sub)
     return -1 if pos < 0 else _cp_to_u16(s, pos)
-
-
-def _is_finite(value):
-    """JS Number.isFinite()."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    return not (isinstance(value, float) and (value != value or value in (float('inf'), float('-inf'))))
 
 
 def _js_number(value):
@@ -219,15 +179,6 @@ def _date_parse_ms(value):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return calendar.timegm(dt.utctimetuple()) * 1000 + dt.microsecond // 1000
-
-
-def _iso_from_ms(ms):
-    """JS new Date(ms).toISOString() — always millisecond precision with a 'Z' suffix."""
-    try:
-        dt = datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None
-    return dt.strftime('%Y-%m-%dT%H:%M:%S') + '.%03dZ' % (ms % 1000)
 
 
 # ── Node 1: Normalize & Validate ──
