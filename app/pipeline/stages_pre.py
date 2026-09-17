@@ -2829,7 +2829,7 @@ def build_outgoing_message_sql_parameters(item: Dict[str, Any], inputs: Dict[str
     save_transport_failed = bool(_has_transport_error(initial) or _has_transport_error(retry))
     save_failed = bool(
         save_transport_failed
-        or _prop(retry, "saved") is False
+        or (retry_ran and _prop(retry, "saved") is not True)
         or ((not retry_ran) and _prop(initial, "saved") is False and _prop(initial, "rejected_reason") != "CONCURRENT_STATE_STALE")
     )
     extracted = _dict_or(inputs.get("extract_single_agent_reply"))

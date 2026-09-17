@@ -240,13 +240,20 @@ def prepare_search_window(trig: Dict[str, Any]) -> Dict[str, Any]:
 # ── Call rpc_get_available_slots (httpRequest -> direct Postgres RPC) ──────────
 async def call_rpc_get_available_slots(prep: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Source node: Call rpc_get_available_slots (Deterministic). Returns slot rows or raises."""
+    cid_uuid = _uuid(prep.get("clinic_id"))
+    start_date = prep.get("start_date")
+    end_date = prep.get("end_date")
+    # Guard: the SQL casts $1::uuid/$2::date/$3::date — a bad clinic UUID or a
+    # missing/empty date raises a PG cast error. Fail soft like the weekly-schedule path.
+    if not cid_uuid or not start_date or not end_date:
+        return []
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             RPC_GET_AVAILABLE_SLOTS_SQL,
-            _uuid(prep.get("clinic_id")),
-            prep.get("start_date"),
-            prep.get("end_date"),
+            cid_uuid,
+            start_date,
+            end_date,
             _uuid(prep.get("doctor_id")),
             _uuid(prep.get("service_id")),
         )
@@ -371,9 +378,13 @@ def match_and_analyze_slots(prep: Dict[str, Any], raw_items: List[Dict[str, Any]
 # ── Check Doctor Weekly Schedule (postgres fallback) ───────────────────────────
 async def check_doctor_weekly_schedule(clinic_id: str, doctor_id: str, requested_date: str) -> List[Dict[str, Any]]:
     """Source node: Check Doctor Weekly Schedule (Fallback)."""
+    cid_uuid = _uuid(clinic_id)
+    doc_uuid = _uuid(doctor_id)
+    if not cid_uuid or not doc_uuid or not requested_date:
+        return []
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(WEEKLY_SCHEDULE_SQL, _uuid(clinic_id), _uuid(doctor_id), requested_date)
+        rows = await conn.fetch(WEEKLY_SCHEDULE_SQL, cid_uuid, doc_uuid, requested_date)
     out = []
     for r in rows:
         d = dict(r)

@@ -6,16 +6,27 @@ the port's public decide() returns the default CONVERSATION_ONLY envelope for an
 unclear turn.
 """
 import io
+from pathlib import Path
 import re
 import sys
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 
 def main() -> int:
-    js = io.open("n8n_reference/extracted/code/System_Orchestrator_Policy.js", encoding="utf-8").read()
+    js_path = _ROOT / "n8n_reference" / "extracted" / "code" / "System_Orchestrator_Policy.js"
+    py_path = _ROOT / "app" / "core" / "orchestrator.py"
     try:
-        py = io.open("app/core/orchestrator.py", encoding="utf-8").read()
+        js = io.open(js_path, encoding="utf-8").read()
     except FileNotFoundError:
-        print("FAIL: app/core/orchestrator.py not found")
+        print(f"FAIL: {js_path} not found")
+        return 1
+    try:
+        py = io.open(py_path, encoding="utf-8").read()
+    except FileNotFoundError:
+        print(f"FAIL: {py_path} not found")
         return 1
 
     tokens = sorted(set(re.findall(r"['\"]([A-Z][A-Z_]{3,})['\"]", js)))

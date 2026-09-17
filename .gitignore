@@ -24,3 +24,19 @@ exec_*.txt
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Local diagnostic scripts — contain live API tokens (Railway/K2). Never commit.
+.workbuddy-ai/
+.vck_base
+tools/check_ce.py
+tools/check_db_messages.py
+tools/check_dd_logs.py
+tools/check_deps.py
+tools/check_logs_both.py
+tools/deploy_core_engine.py
+tools/find_telegram_channels.py
+tools/inspect_conv.py
+tools/inspect_railway.py
+tools/print_channels.py
+tools/print_vars.py
+tools/test_live_endpoint.py

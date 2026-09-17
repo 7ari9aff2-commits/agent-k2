@@ -141,3 +141,27 @@ Deferred — not blocking the port.
   signed path is exercisable.
 - BLOCKER: Novita balance $0 → live messages get the deterministic fallback reply until the
   account is topped up. Everything else verified green end to end.
+
+## FIX PASS 2026-09-17 (post-cutover bug sweep + LLM gateway)
+- Deep logic audit (3 axes: decision core / LLM safety chain / pipeline-persistence). Key findings
+  logged in docs + fixed:
+  1. L08 early security reject read `signature_result` instead of the Log-Incoming row — committed
+     code never rejected `security_reject` (channel-binding spoof could reach the LLM). FIXED.
+  2. Business-time gate decision now propagated as `decision` to audit/tail (BUG-9). FIXED.
+  3. Availability tool ctx gains `state_data`/`clinic_context` (single-doctor/service fallback, BUG-7).
+  4. respond.py + stages_pre outgoing-params: stale-retry failure detection unified
+     (`retry_ran and saved is not True`) — DB-logged reply now matches the patient reply (BUG-8 + sibling). FIXED.
+  5. UUID/date guards: check_doctor_weekly_schedule (existing) + call_rpc_get_available_slots
+     ($1::uuid/$2::date/$3::date cast-error guard). resolve_clinic_timezone verified safe-by-design
+     (NULLIF text params + dict(item) fallback). FIXED.
+  6. Single-agent result-phase early-return: it passed guard={} (reply-guard bypass). The branch is
+     DEAD in production (runner always yields phase="understand": no execution evidence, loop_count=1 —
+     the n8n post-execution loop was never replicated). FIXED to always run persist + reply guard;
+     pre_extracted only skips re-extraction. Test strengthened to assert guard+persist run.
+- tests/test_fixes.py: 11 tests covering BUG-2..BUG-9 + siblings. Suite: 47 passing.
+- LLM: Railway vars ALREADY point to ai-gateway.vercel.sh + deepseek/deepseek-v4-flash-0731, but the
+  vck_ credential is REJECTED by Vercel (401 authentication_error, verified locally + in prod via
+  /debug/llm). A valid Vercel AI Gateway key is the only remaining LLM blocker; graceful degradation
+  (deterministic fallback replies) covers live traffic until then.
+- OPS: 8 untracked tools/*.py scripts contain a live Railway API token; never committed (git history
+  clean — verified with git log -S). .gitignore now guards them. ROTATE the Railway token as hygiene.

@@ -152,8 +152,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     incoming_message = await repository.log_incoming_message(normalized)
 
     # ── L08 IF Early Security Reject → Respond Unauthorized (403/404) ──────────
-    if conditions_pre.if_early_security_reject(signature_result):
-        error_code = (signature_result or {}).get("security_error") or "PATIENT_CONVERSATION_OWNERSHIP_MISMATCH"
+    if conditions_pre.if_early_security_reject(incoming_message):
+        error_code = (incoming_message or {}).get("security_error") or "PATIENT_CONVERSATION_OWNERSHIP_MISMATCH"
         is_clinic_missing = error_code == "CLINIC_NOT_FOUND"
         raise _Exit({"ok": False, "error_code": error_code,
                      "message": "تعذر العثور على العيادة المطلوبة" if is_clinic_missing else "تعذر التحقق من بيانات المحادثة"},
@@ -255,6 +255,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             "clinic_id": normalized.get("clinic_id"),
             "conversation_id": normalized.get("conversation_id"),
             "patient_id": normalized.get("patient_id"),
+            "state_data": state_data,
+            "clinic_context": clinic_context,
         })
     except Exception:
         # n8n routed model failures to the error workflow; here the R-layers + policy
@@ -278,16 +280,21 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         prepared = stages_post.prepare_single_agent_result_context(routed, {
             "normalize_validate": normalized, "system_orchestrator": {}, "conversation_state": state_row,
             "clinic_context": clinic_context, "persona_builder": persona_context})
-        normalized_agent_output = stages_post.extract_single_agent_reply(prepared, {
+        extracted_single = stages_post.extract_single_agent_reply(prepared, {
             "normalize_validate": normalized, "conversation_state": state_row,
             "clinic_context": clinic_context, "persona_builder": persona_context})
+        policy = {"response_code": "CONVERSATION_ONLY", "output": {}}
+        return await _respond_tail(normalized, state_row, state_data, policy, {},
+                                   persona_context, {}, extracted_single,
+                                   extracted_single, clinic_context, raw_llm_output,
+                                   pre_extracted=extracted_single)
     else:
         # [false] → Normalize Agent Output (Deterministic)
         normalized_agent_output = agent_output.normalize_agent_output({
             "current": adapted, "normalize_validate": normalized, "conversation_state": state_row,
             "clinic_context": clinic_context, "patient_ownership": ownership,
             "persona_builder": persona_context})
-    normalized_agent = normalized_agent_output
+        normalized_agent = normalized_agent_output
 
     # ── L34 IF Contract Needs Repair → Build Repair Prompt → Repair Chain ──────
     repaired_result: Dict[str, Any] = {}
@@ -355,6 +362,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             "normalized": normalized, "clinic_context": clinic_context, "guard": guard_result})
         gate_decision = gates.business_time_gate_deterministic(guard_result, time_ctx_row)
         if not conditions_post.if_business_time_allowed(gate_decision):
+            decision = gate_decision
             policy = response_policy.build_response(_policy_ctx(
                 current=gate_decision, system_orchestrator=decision, persona_builder=persona_context,
                 validate_repaired=repaired_result, normalize_agent_output=normalized_agent_output,
@@ -428,25 +436,33 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
                         policy: Dict[str, Any], decision: Dict[str, Any], persona_context: Dict[str, Any],
                         repaired_result: Dict[str, Any], normalized_agent_output: Dict[str, Any],
                         normalized_agent: Dict[str, Any], clinic_context: Optional[Dict[str, Any]] = None,
-                        raw_llm_output: Optional[str] = None) -> Dict[str, Any]:
+                        raw_llm_output: Optional[str] = None,
+                        pre_extracted: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Shared tail: persist confirmation → reply guard → reply extraction → audit/usage →
     handoff → state save with stale retry → log outgoing → Respond To Patient."""
     # ── L61 Persist Pending Confirmation (Deterministic) ───────────────────────
     await repository.persist_pending_confirmation({"normalized": normalized, "decision": decision})
 
-    # ── L62 Reply Guard (Deterministic) ────────────────────────────────────────
+    # ── L62 Reply Guard (Deterministic) — always runs, even when the caller
+    # pre-extracted the reply (single-agent result phase): safety is not optional.
     guard = reply_guard.apply_reply_guard({"response_policy": policy})
 
-    # ── L63-64 Prepare Single Agent Result Context + Extract Single Agent Reply ─
-    prepared = stages_post.prepare_single_agent_result_context(guard, {
-        "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
-        "conversation_state": state_row, "clinic_context": clinic_context or {}, "persona_builder": persona_context,
-        "validate_repaired_contract": repaired_result, "normalize_agent_output": normalized_agent_output})
-    extracted = stages_post.extract_single_agent_reply(prepared, {
-        "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
-        "conversation_state": state_row, "persona_builder": persona_context,
-        "normalize_agent_output": normalized_agent_output, "validate_repaired_contract": repaired_result})
-    rendered_reply = (extracted or {}).get("rendered_reply")
+    if pre_extracted is not None:
+        # Reply already extracted upstream (single-agent result phase) — reuse it to
+        # avoid double extraction, but the guard + persist above still apply.
+        extracted = pre_extracted
+        rendered_reply = (extracted or {}).get("rendered_reply")
+    else:
+        # ── L63-64 Prepare Single Agent Result Context + Extract Single Agent Reply ─
+        prepared = stages_post.prepare_single_agent_result_context(guard, {
+            "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
+            "conversation_state": state_row, "clinic_context": clinic_context or {}, "persona_builder": persona_context,
+            "validate_repaired_contract": repaired_result, "normalize_agent_output": normalized_agent_output})
+        extracted = stages_post.extract_single_agent_reply(prepared, {
+            "response_policy": policy, "system_orchestrator": decision, "normalize_validate": normalized,
+            "conversation_state": state_row, "persona_builder": persona_context,
+            "normalize_agent_output": normalized_agent_output, "validate_repaired_contract": repaired_result})
+        rendered_reply = (extracted or {}).get("rendered_reply")
 
     # ── L65-66 Derive Actions + audit + AI usage ───────────────────────────────
     actions = contract_adapter.derive_actions({

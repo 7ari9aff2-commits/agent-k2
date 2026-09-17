@@ -47,7 +47,7 @@ def build_final_response(
     failed = (
         _has_transport_error(initial)
         or _has_transport_error(retry)
-        or retry.get("saved") is False
+        or (retry_ran and retry.get("saved") is not True)
         or (not retry_ran and initial.get("saved") is False
             and initial.get("rejected_reason") != "CONCURRENT_STATE_STALE")
     )
