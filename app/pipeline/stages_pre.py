@@ -1395,10 +1395,31 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
     else:
         stable_previous_booking = {}
     previous_slot: Any = {} if (new_booking_restart or expired_prior_draft) else _first_truthy(_prop(previous, "slot_state"), _prop(previous, "booking_context"), {})
-    previous_booking_fallback: Any = (
-        {} if new_booking_restart
-        else (stable_previous_booking if expired_prior_draft else _first_truthy(_prop(previous, "booking_context"), {}))
-    )
+    if new_booking_restart:
+        # A restart resets SCHEDULING facts (date/time/slot) but keeps the patient's
+        # stable identity facts (doctor/service/type) when the new request names no
+        # doctor — a full wipe made the next turn re-ask a doctor the patient had
+        # already chosen. If the patient names another doctor, reset fully.
+        restart_names_doctor = _js_truthy(_first_truthy(
+            _dig(output, "contract", "entities", "doctor_name"),
+            _dig(output, "contract", "entities", "doctor_id"),
+            None,
+        ))
+        previous_booking_fallback: Any = (
+            {}
+            if restart_names_doctor
+            else {k: v for k, v in {
+                "doctor_id": _dig(previous, "booking_context", "doctor_id"),
+                "doctor_name": _dig(previous, "booking_context", "doctor_name"),
+                "service_id": _dig(previous, "booking_context", "service_id"),
+                "service_name": _dig(previous, "booking_context", "service_name"),
+                "appointment_type": _dig(previous, "booking_context", "appointment_type"),
+            }.items() if _js_truthy(v)}
+        )
+    else:
+        previous_booking_fallback: Any = (
+            stable_previous_booking if expired_prior_draft else _first_truthy(_prop(previous, "booking_context"), {})
+        )
     current_slot: Any = _first_truthy(_prop(output, "slot_state"), {})
     # Orchestrator slot context (same node read three times in the JS).
     orch_resolved = _obj_or_none(_prop(orch_output, "system_decision")) or {}

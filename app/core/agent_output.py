@@ -540,7 +540,7 @@ def _message_class(contract, state):
 
 # ── Deterministic day-word absorption (closed vocabulary → ISO) ──
 _DAY_WORD_OFFSETS = [
-    ('بعد بكرة', 2), ('بعد بكره', 2), ('بعد غد', 2),
+    ('بعد بكرة', 2), ('بعد بكره', 2), ('بعد غد', 2), ('بعدغد', 2), ('بعدغده', 2),
     ('بكرة', 1), ('بكره', 1), ('غدا', 1), ('غدًا', 1),
     ('اليوم', 0)
 ]
@@ -565,6 +565,11 @@ def _absorb_day_word_to_iso(raw, now_iso_date):
         for word, target in _WEEKDAY_TARGETS:
             if word in s:
                 delta = (target - base_wd + 7) % 7
+                if delta == 0:
+                    # "الخميس" said on a Thursday means NEXT Thursday — a patient naming
+                    # today's weekday is booking ahead, not asking for a same-day slot
+                    # that almost certainly no longer exists.
+                    delta = 7
                 break
     if delta is None:
         return None

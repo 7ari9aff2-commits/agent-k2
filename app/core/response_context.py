@@ -10,6 +10,7 @@ No regex, response-code text templates, or conditional sentence assembly live he
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 _MAX_DEPTH = 7
@@ -283,6 +284,46 @@ def _strip_code_fence(raw: str) -> str:
     return "\n".join(lines).strip()
 
 
+_DIGIT_FOLD = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+_VALUE_TOKEN_RE = re.compile(r"[0-9][0-9:٫/.-]{2,}")
+
+
+def _fold_digits(text: Any) -> str:
+    return str(text or "").translate(_DIGIT_FOLD)
+
+
+def _collect_fact_values(facts: Any, key: Optional[str] = None, out: Optional[set] = None) -> set:
+    """Collect folded leaf values (or values of dicts carrying `key`) from a facts tree."""
+    out = set() if out is None else out
+    if isinstance(facts, dict):
+        for k, v in facts.items():
+            if isinstance(v, (dict, list)):
+                _collect_fact_values(v, key, out)
+            elif v is not None and (key is None or k == key):
+                out.add(_fold_digits(v))
+    elif isinstance(facts, list):
+        for item in facts:
+            _collect_fact_values(item, key, out)
+    elif facts is not None and key is None:
+        out.add(_fold_digits(facts))
+    return out
+
+
+def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, Any]) -> List[str]:
+    facts_by_id = {f.get("id"): f.get("value") for f in (context.get("facts") or []) if isinstance(f, dict)}
+    allowed: set = set()
+    for fid in evidence_ids or []:
+        _collect_fact_values(facts_by_id.get(fid), out=allowed)
+    if not allowed:
+        return []
+    errors: List[str] = []
+    reply_folded = _fold_digits(reply)
+    for token in _VALUE_TOKEN_RE.findall(reply_folded):
+        if token not in allowed and not any(token in value for value in allowed):
+            errors.append(f"reply_value_not_in_facts:{token}")
+    return errors
+
+
 def validate_composer_output(raw: Any, context: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """Validate the composer's structured contract without inspecting prose via regex."""
     errors: List[str] = []
@@ -342,6 +383,24 @@ def validate_composer_output(raw: Any, context: Dict[str, Any]) -> Tuple[Optiona
     if not isinstance(missing_information, list):
         errors.append("missing_information_is_not_list")
         missing_information = []
+
+    # ── Value-level grounding (added 2026-09-18) ──────────────────────────────
+    # The evidence contract alone is self-attested: a reply can cite a real fact and
+    # still state a slot/date that exists nowhere. Every number-bearing token the
+    # reply states (dates, times, prices, durations) must occur verbatim (Arabic-
+    # Indic digits folded) among the values of the CITED facts. Violations feed the
+    # composer's repair loop, so the model corrects its own text. Single digits are
+    # skipped (counts like "3 مواعيد" are not entity values).
+    errors.extend(_value_grounding_errors(reply or "", clean_evidence, context))
+
+    # A completed mutation must surface its booking number — it is the patient's only
+    # reference to the appointment.
+    response_code = str(context.get("response_code") or "")
+    if response_code in {"APPOINTMENT_CREATED", "RESCHEDULE_COMPLETED", "CANCEL_COMPLETED", "IDEMPOTENT_REPLAY"}:
+        booking_numbers = _collect_fact_values(context.get("facts") or [], key="booking_number")
+        for number in booking_numbers:
+            if _fold_digits(number) not in _fold_digits(reply or ""):
+                errors.append(f"reply_missing_booking_number:{number}")
 
     if errors:
         return None, errors

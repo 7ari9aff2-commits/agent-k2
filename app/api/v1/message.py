@@ -8,6 +8,7 @@ exactly the keys the ported functions document.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -91,6 +92,17 @@ def _contract_v3_of(normalized_agent: Dict[str, Any], adapted: Dict[str, Any]) -
     return (adapted or {}).get("contract_v3") or {}
 
 
+# Per-conversation turn serialization (added 2026-09-18): two rapid messages from the
+# same patient used to run the pipeline concurrently — distinct idempotency keys mean
+# dedupe/claim never serialized them, and both could execute mutations (double booking).
+# An in-process lock queues the second message until the first turn finishes; it then
+# runs against the FRESH state. Single-replica deployment (Railway); multi-replica
+# deployments would need a shared lock (Redis/DB advisory lock).
+_CONVERSATION_LOCKS: Dict[str, asyncio.Lock] = {}
+_CONVERSATION_LOCKS_GUARD = asyncio.Lock()
+_CONVERSATION_LOCK_WAIT_SECONDS = 90.0
+
+
 @router.post("/message")
 async def process_patient_message(request: Request,
                                   authorized: bool = Depends(verify_internal_token)) -> K2JSONResponse:
@@ -104,8 +116,25 @@ async def process_patient_message(request: Request,
     if not isinstance(body, dict):
         body = {"raw_payload": body}
     correlation_id = str(body.get("idempotency_key") or body.get("conversation_id") or "")
+    conversation_key = str(body.get("conversation_id") or "")
     logger.info("k2.request.start", extra={"correlation_id": correlation_id,
-                                           "conversation_id": body.get("conversation_id")})
+                                           "conversation_id": conversation_key})
+
+    turn_lock: Optional[asyncio.Lock] = None
+    if conversation_key:
+        async with _CONVERSATION_LOCKS_GUARD:
+            turn_lock = _CONVERSATION_LOCKS.setdefault(conversation_key, asyncio.Lock())
+        try:
+            await asyncio.wait_for(turn_lock.acquire(), timeout=_CONVERSATION_LOCK_WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning("k2.request.turn_queue_timeout", extra={"correlation_id": correlation_id,
+                                                                   "conversation_id": conversation_key})
+            return K2JSONResponse(status_code=200, content={
+                "reply_text": None, "suppress_reply": True,
+                "response_code": "QUEUED_BEHIND_TURN",
+                "conversation_id": body.get("conversation_id"),
+                "clinic_id": body.get("clinic_id"),
+            })
     try:
         out = await _run(body, raw_headers, raw_body)
         logger.info("k2.request.done", extra={"correlation_id": correlation_id,
@@ -122,6 +151,9 @@ async def process_patient_message(request: Request,
         logger.exception("k2.request.failed", extra={"correlation_id": correlation_id})
         return K2JSONResponse(status_code=500, content={"ok": False, "error_code": "INTERNAL_ERROR",
                                                         "correlation_id": correlation_id})
+    finally:
+        if turn_lock is not None:
+            turn_lock.release()
 
 
 async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: bytes = b"") -> Dict[str, Any]:
@@ -166,10 +198,17 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                     status_code=404 if is_clinic_missing else 403)
 
     # ── L09 Check Duplicate Message → Respond Duplicate (200) ──────────────────
+    # Divergence (2026-09-18): a duplicate is suppressed ONLY when the first attempt
+    # actually delivered a reply. A duplicate with no outgoing row means the previous
+    # attempt died mid-turn — suppressing it left the patient permanently unanswered;
+    # the turn is re-run instead (the operation claim ledger keeps mutations safe).
     if conditions_pre.if_check_duplicate_message(incoming_message):
-        raise _Exit({"ok": True, "duplicate": True,
-                     "idempotency_key": normalized.get("idempotency_key"),
-                     "message": "already_processed"}, status_code=200)
+        if await repository.has_outgoing_reply(normalized):
+            raise _Exit({"ok": True, "duplicate": True,
+                         "idempotency_key": normalized.get("idempotency_key"),
+                         "message": "already_processed"}, status_code=200)
+        logger.info("k2.duplicate_without_delivered_reply — re-running the interrupted turn",
+                    extra={"correlation_id": _correlation_of(normalized)})
 
     # ── L10 Get Clinic Context ─────────────────────────────────────────────────
     clinic_context = await repository.get_clinic_context(normalized)

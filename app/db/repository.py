@@ -445,6 +445,32 @@ async def get_active_handoff_request(normalized: dict) -> dict:
     return dict(row) if row else {}
 
 
+async def has_outgoing_reply(ctx: dict) -> bool:
+    """True when the turn for this idempotency key already produced a logged reply.
+
+    The outgoing Log Outgoing Message row's message_id is md5(<idempotency_key> || ':outgoing')
+    (queries.py Log_Outgoing_Message). A duplicate inbound WITHOUT this row means the first
+    attempt died mid-turn; suppressing it as a duplicate would leave the patient permanently
+    unanswered — the caller re-runs the turn instead (the operation claim ledger makes that
+    safe for mutations).
+    """
+    import hashlib
+
+    key = _js_str(_js_or((ctx or {}).get("idempotency_key"), ""))
+    if not key:
+        return False
+    from app.db.pool import get_pool
+
+    outgoing_id = hashlib.md5((key + ":outgoing").encode("utf-8")).hexdigest()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE id = $1::uuid) AS present",
+            outgoing_id,
+        )
+    return bool(row and row["present"])
+
+
 async def read_fresh_offer_midturn(ctx: dict) -> dict:
     """Source node: Read Fresh Offer (Midturn) (extracted/sql/Read_Fresh_Offer_Midturn.json)."""
     nv = _nv(ctx)

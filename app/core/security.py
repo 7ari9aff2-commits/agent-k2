@@ -16,7 +16,11 @@ def verify_internal_token(
     if not settings.K2_INTERNAL_TOKEN:
         logger.error("K2_INTERNAL_TOKEN is not configured")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="server token misconfigured")
-    if not hmac.compare_digest(x_k2_internal_token, settings.K2_INTERNAL_TOKEN):
+    # compare_digest over bytes: the str/str form raises TypeError on non-ASCII header
+    # values, turning a 401 into an unhandled 500.
+    supplied = x_k2_internal_token.encode("utf-8", errors="replace")
+    expected = settings.K2_INTERNAL_TOKEN.encode("utf-8")
+    if not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     return True
 
