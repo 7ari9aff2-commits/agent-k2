@@ -47,3 +47,4 @@ tools/inspect_wa_node.py
 tools/list_n8n_creds.py
 tools/n8n_mcp_client.py
 tools/search_n8n_workflows.py
+_tmp_audit.py
