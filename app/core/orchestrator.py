@@ -1104,6 +1104,41 @@ def _decide_state_table(inp, now_ts=None):
             veto_reasons.append('patient_data_gate_failed')
             return finish('review_confirmed_missing_data', STATES['CONFIRM_PATIENT_DATA'], 'MISSING_REQUIRED_FIELDS',
                           {'missing_fields': missing})
+        # Journey finding (2026-09-18): after the data-confirm there may be NO prior
+        # target but a LIVE presented_offer the patient already engaged with — bind it
+        # now (CONFIRMATION_REQUIRED) instead of asking the date again and dropping to
+        # CONVERSATION (a full wasted turn for the patient).
+        bound_alt = match_offered_alternative(offer, contract) if _truthy(offer) else None
+        if _truthy(bound_alt) and uuid_valid(_dict(bound_alt).get('slot_id')):
+            target = build_create_target(inp, bound_alt, 'offered_alternative', now_ts)
+            if target_binding_valid(target, state, clinic, now_ts):
+                complete = patient_data_complete(patient_fields_from(state, contract), target.get('appointment_type'))
+                if complete:
+                    patches['confirmation_target'] = target
+                    # Mirror the P42 row: the slot identity must land in booking_context
+                    # and slot_state too — the transition guard's create data_valid reads
+                    # it from there (its absence blocked the executor in the journey).
+                    patches['slot_state'] = {
+                        **(patches.get('slot_state') if isinstance(patches.get('slot_state'), dict) else {}),
+                        'slot_id': target.get('slot_id'), 'date': target.get('date'),
+                        'time': target.get('time'), 'doctor_id': target.get('doctor_id'),
+                        'doctor_name': target.get('doctor_name'),
+                        'appointment_type': target.get('appointment_type'),
+                    }
+                    patches['booking_context'] = {
+                        **(patches.get('booking_context') if isinstance(patches.get('booking_context'), dict) else {}),
+                        'slot_id': target.get('slot_id'), 'date': target.get('date'),
+                        'time': target.get('time'), 'doctor_id': target.get('doctor_id'),
+                        'doctor_name': target.get('doctor_name'),
+                        'appointment_type': target.get('appointment_type'),
+                    }
+                    patches['turn_directive'] = directive_for('propose_confirm', {
+                        'confirmFacts': {'doctor_name': target.get('doctor_name'), 'date': target.get('date'),
+                                         'time': target.get('time'), 'appointment_type': target.get('appointment_type')},
+                        'lockedFields': locked_fields_of(state, contract)})
+                    return finish('review_confirmed_bind_offer', STATES['AWAIT_CONFIRMATION'], 'CONFIRMATION_REQUIRED',
+                                  {'confirmation_state': 'proposed', 'patient_data_complete': complete,
+                                   'patient_data_gate_satisfied': complete})
         patches['turn_directive'] = directive_for('ask_date', {'lockedFields': locked_fields_of(patches, contract)})
         return finish('review_confirmed_ask_date', STATES['ASK_DATE'], 'CONVERSATION_ONLY', {})
 
@@ -1151,7 +1186,11 @@ def _decide_state_table(inp, now_ts=None):
         if ref_patch:
             patches['confirmation_target'] = {**prior_target, **ref_patch}
     if cs in (STATES['ASK_DATE'], STATES['AWAIT_SLOT_CHOICE'], STATES['AWAIT_CONFIRMATION']):
-        if _truthy(offer) and cls == 'selection_presented':  # P42: bind from any of ASK_DATE/AWAIT_SLOT_CHOICE/AWAIT_CONFIRMATION — interleaved turns legally move cs off AWAIT_SLOT_CHOICE while the offer stays open
+        # Journey finding (2026-09-18): the patient confirming their data with an
+        # affirmative + a requested create proposal IS the slot pick — the offer is
+        # live and the confirm turn references it ('أيوه صح' to 'أأكد الخميس 10:30؟').
+        if _truthy(offer) and (cls == 'selection_presented'
+                or (cls == 'confirmation_affirm' and _dig(contract, 'operation_proposal', 'requested') is True)):  # P42: bind from any of ASK_DATE/AWAIT_SLOT_CHOICE/AWAIT_CONFIRMATION — interleaved turns legally move cs off AWAIT_SLOT_CHOICE while the offer stays open
             alt = match_offered_alternative(offer, contract)
             if _truthy(alt) and uuid_valid(_dict(alt).get('slot_id')):
                 target = build_create_target(inp, alt, 'offered_alternative', now_ts)

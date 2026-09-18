@@ -224,21 +224,25 @@ def test_full_booking_journey(monkeypatch):
         "expires_at": "2026-09-19T00:00:00Z"}
     r5 = asyncio.run(_run(payload("أيوه صح", "evt-5"), {}))
     bound = STATE_STORE["state_data"]
-    # OPEN GAP (orchestrator state table, reviewer-flagged dead-row family): after the
-    # data-confirm turn the machine lands in ASK_DATE/CONVERSATION instead of binding
-    # the live presented_offer — the CONFIRM_PATIENT_DATA affirmative row has no
-    # bind-without-pre-bound-target arm. When that arm exists, the conditional asserts
-    # in T6 below become strict and the journey executes end to end.
-    # The turn must complete safely and answer the patient either way.
-    assert r5.get("reply_text"), "data-confirm turn must still deliver a reply"
+    # The binding arm (added 2026-09-18) offers the live slot for final confirmation
+    # right after the data confirm — no wasted date re-ask, no CONVERSATION dead-end.
+    assert bound.get("response_code") == "CONFIRMATION_REQUIRED", bound.get("response_code")
+    assert (bound.get("confirmation_target") or {}).get("slot_id") == SLOT,         json.dumps(bound.get("confirmation_target"), ensure_ascii=False)[:200]
 
-    # ── T6: the patient affirms the booking → executor → identity (KNOWN GAP) ──
+    # ── T6: the patient affirms the booking → executor → identity persists ──
+    # KNOWN GAP (documented): the last link — guard/claim passthrough on the bound
+    # target — is still being wired; the conditional asserts below hold the moment
+    # the executor receives the bound target.
     r6 = asyncio.run(_run(payload("أيوه أكد", "evt-6"), {}))
     assert r6.get("reply_text"), "the affirm turn must still deliver a reply"
     sd = exec_calls.get("system_decision") or {}
     if sd:
         assert (sd.get("confirmation_target") or {}).get("slot_id") == SLOT
-        assert finalize_calls and finalize_calls[-1].get("finalize_status") == "COMPLETED"
-        assert finalize_calls[-1].get("finalize_clinic_id") == CLINIC
+        assert exec_calls.get("patient_phone") == "+966500000000"
+        assert finalize_calls, "finalize must run"
+        fc = finalize_calls[-1]
+        assert fc.get("finalize_status") == "COMPLETED", fc
+        assert fc.get("finalize_mutation_status") == "EXECUTED", fc
+        assert fc.get("finalize_clinic_id") == CLINIC, fc
         assert "BK-240918-01" in json.dumps(saved_bodies[-1], ensure_ascii=False)
         assert "BK-240918-01" in (r6.get("reply_text") or "")

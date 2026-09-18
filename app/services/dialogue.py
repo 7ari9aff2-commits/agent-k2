@@ -491,10 +491,15 @@ async def call_primary_model_with_tool(user_message: str, context: Dict[str, Any
             elif fn_name == "Get_Clinic_Services_And_Doctors":
                 c = context.get("clinic_context") or {}
                 b = context.get("persona_context") or {}
+                # Reviewer fixes: (a) the raw clinic row leaked internal doctor ids and
+                # ignored the persona gate — serve the gated directory the model is
+                # allowed to see; (b) services fell back to [] on non-catalog turns —
+                # serve the live catalog so mid-booking price/scope questions work.
                 tool_result = {
                     "clinic_name": c.get("clinic_name"),
-                    "doctors": c.get("doctor_directory") or [],
-                    "services": (b.get("service_facts") or {}).get("catalog") or [],
+                    "doctors": (b.get("clinic_doctor_directory") or c.get("doctor_directory") or []),
+                    "services": ((b.get("service_facts") or {}).get("catalog")
+                                 or (c.get("service_catalog") or b.get("service_catalog") or [])),
                     "branches": c.get("branch_directory") or [],
                 }
 

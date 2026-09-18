@@ -786,9 +786,29 @@ def build_clinic_persona_context_deterministic(item: Dict[str, Any], inputs: Dic
             "name": _clean_text(_first_truthy(_prop(d, "doctor_name"), _prop(d, "name"), "")),
             "id": _first_truthy(_prop(d, "doctor_id"), _prop(d, "id"), None),
         })
+    # Reviewer fix: raw substring inclusion matched 'علي' inside 'وعليكم السلام' — a
+    # doctor never selected became the recovery fact. Match on folded name tokens
+    # with a minimum length instead.
+    def _turn_tokens(text: str) -> set:
+        return {tok for tok in re.split(r'[^؀-ۿ]+', _norm_ar_name(text)) if len(tok) >= 3}
+
+    def _name_in_turn(name: str, turn_text: str) -> bool:
+        # The LONGEST normalized name token must appear as a turn token — 'علي' no
+        # longer matches inside 'وعليكم السلام' (reviewer collision fix), while
+        # multi-word names match on their distinctive surname token.
+        name_toks = [t for t in re.split(r'[^؀-ۿ]+', _norm_ar_name(name)) if len(t) >= 3]
+        if not name_toks:
+            return False
+        turn_toks = _turn_tokens(turn_text)
+        return max(name_toks, key=len) in turn_toks
+
     recovered_candidates = [
         d for d in recovered_candidates
-        if d["name"] and any(d["name"] in _clean_text(_first_truthy(_dig(t, "text"), _dig(t, "message"), _dig(t, "content"), "")) for t in recent_assistant_turns_for_recovery)
+        if d["name"] and any(
+            _name_in_turn(d["name"], _clean_text(_first_truthy(
+                _dig(t, "text"), _dig(t, "message"), _dig(t, "content"), "")))
+            for t in recent_assistant_turns_for_recovery
+        )
     ]
     recovered_candidates.sort(key=lambda d: -_u16_len(d["name"]))
     if recovered_candidates:
@@ -957,16 +977,26 @@ def build_clinic_persona_context_deterministic(item: Dict[str, Any], inputs: Dic
             if _js_truthy(_prop(live_booking_context, "doctor_name"))
             else None
         )
-        if requested_doctor and stored_doctor and _norm_ar_name(requested_doctor) != _norm_ar_name(stored_doctor):
+        # Reviewer fixes: (a) the change fires on mere availability QUESTIONS about
+        # another doctor ('هل دكتور خالد موجود؟') — require switch intent (a
+        # correction or a booking verb), and (b) the rebuild spread the PRE-v37
+        # snapshot, resurrecting a stale date the v37 phantom-date fix had just
+        # nulled — spread the post-v37 agent-context copy instead.
+        _switch_message = _js_string(_prop(_dict_or(inputs.get("normalize_validate")), "message_text") or "")
+        switch_requested = (
+            _prop(doctor_inquiry_for_change, "correction_detected") is True
+            or bool(re.search(r"(?:احجز|بحجز|عايز\s+احجز|عاوز\s+احجز)", _switch_message))
+        )
+        if requested_doctor and stored_doctor and _norm_ar_name(requested_doctor) != _norm_ar_name(stored_doctor) and switch_requested:
             live_agent_context["doctor_change"] = {
                 "from": stored_doctor,
                 "to": requested_doctor,
                 "doctor_id": _first_truthy(_prop(doctor_inquiry_for_change, "doctor_id"), None),
             }
             live_agent_context["booking_context"] = {
-                **live_booking_context,
+                **_dict_or(live_agent_context.get("booking_context")),
                 "doctor_name": requested_doctor,
-                "doctor_id": _first_truthy(_prop(doctor_inquiry_for_change, "doctor_id"), _prop(live_booking_context, "doctor_id"), None),
+                "doctor_id": _first_truthy(_prop(doctor_inquiry_for_change, "doctor_id"), _prop(live_agent_context.get("booking_context"), "doctor_id"), None),
             }
             bp = live_agent_context.get("booking_progress")
             if _js_truthy(bp):
