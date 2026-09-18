@@ -239,9 +239,10 @@ def test_full_booking_journey(monkeypatch):
     # ── T6: the patient affirms the booking → executor → identity persists ──
     # With the P42 affirmative arm + the live-offer stub this now executes end to end.
     r6 = asyncio.run(_run(payload("أيوه أكد", "evt-6"), {}))
-    # OPEN GAP: the affirm turn at AWAIT_CONFIRMATION still lands on the re-present
-    # arm instead of c1_confirm_execute — the strict executor asserts are documented
-    # in the gap block above and become strict the moment the state-table arm lands.
+    # REMAINING LINK (next session, fresh context): the affirm at AWAIT_CONFIRMATION
+    # still does not reach c1_confirm_execute even with the whitelisted target —
+    # instrument the C1 gate inputs (cls/prior_target/binding_valid) at T6 to find
+    # the last drop. Everything before it is proven by T1-T5 asserts above.
     sd = exec_calls.get("system_decision") or {}
     if sd:
         assert (sd.get("confirmation_target") or {}).get("slot_id") == SLOT

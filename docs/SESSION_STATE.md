@@ -19,7 +19,7 @@
 8. شخصية محايدة عاطفيا بلهجة بلد العيادة (من `assistant_persona.dialect`).
 
 ## فجوات مفتوحة معلنة (بالترتيب)
-1. **ذراع ربط العرض بعد تأكيد البيانات**: CONFIRM_PATIENT_DATA affirmative بلا هدف مسبق → تقع CONVERSATION بدل ربط العرض الحي. موثقة في `tests/test_booking_journey.py` (شرطات T6 تصبح صارمة لحظة إضافتها).
+1. **الحلقة الأخيرة للحجز**: الذراعان أضيفتا (ربط العرض بعد تأكيد البيانات + امتداد P42 للموافقة) وT5 يربط ويحفظ slot_id (whitelist الـ compact اتوسعت) — لكن affirm على AWAIT_CONFIRMATION لسه مايوصلك لـ c1_confirm_execute. المطلوب: تتبع مدخلات بوابة C1 عند T6 (cls/prior_target/binding_valid) بأداة `tools/talk_test.py` أو جهاز الرحلة. الاختبار: `tests/test_booking_journey.py` — شرطات T6 تصبح صارمة لحظة الإصلاح.
 2. عمود booking_number في SQL إلغاء/تعديل (تأجيل بقرار المالك — إزاحة عن النص الحرفي).
 3. تسلسل عبر أكثر من نسخة Railway (القفل الحالي داخل العملية الواحدة).
 4. تأكيد أن الـ deferred worker يعيد الإرسال لنفس الـ endpoint.

@@ -1043,7 +1043,7 @@ def build_clinic_persona_context_deterministic(item: Dict[str, Any], inputs: Dic
     if _js_truthy(_prop(c, "confirmation_state")):
         cs_val = _prop(c, "confirmation_state")
         _compact_put(state, "confirmation_state", cs_val if isinstance(cs_val, str) else _compact_object(cs_val, ["status", "valid", "pending"]))
-    _compact_put(state, "confirmation_target", _compact_object(target, ["action", "operation", "target_operation", "doctor_name", "service_name", "appointment_type", "date", "time", "branch_name", "patient_name", "patient_phone", "patient_age", "patient_address", "booking_number"]))
+    _compact_put(state, "confirmation_target", _compact_object(target, ["action", "operation", "target_operation", "doctor_name", "doctor_id", "service_name", "appointment_type", "date", "time", "branch_name", "patient_name", "patient_phone", "patient_age", "patient_address", "booking_number", "slot_id", "confirmation_id", "expires_at"]))
     if _js_truthy(_prop(c, "last_open_question")) and not _js_truthy(pre_agent_stage_contract):
         _compact_put(state, "last_open_question", _compact_object(_prop(c, "last_open_question"), ["requested_fields", "pending_action"]))
     if _js_truthy(review):
