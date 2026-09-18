@@ -70,7 +70,7 @@ def stub_io(monkeypatch, *, signature=None, incoming=None, gate=None, llm_output
     monkeypatch.setattr(repo, "log_agent_audit_entry", lambda entry: _async({}))
     monkeypatch.setattr(repo, "insert_ai_request_usage", lambda usage: _async("INSERT 0 1"))
     monkeypatch.setattr(repo, "log_outgoing_message", lambda params: _async({"id": "out-1"}))
-    monkeypatch.setattr(repo, "has_outgoing_reply", lambda normalized: _async(True))
+    monkeypatch.setattr(repo, "get_outgoing_reply", lambda normalized: _async("أهلاً بك! كيف أقدر أساعدك؟"))
     monkeypatch.setattr(repo, "save_conversation_state_with_retry",
                         lambda normalized, save_body: _async({"initial": {"saved": True}, "retry": None}))
     monkeypatch.setattr(repo, "read_fresh_offer_midturn", lambda ctx: _async({}))

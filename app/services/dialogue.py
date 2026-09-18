@@ -296,15 +296,17 @@ RECEPTIONIST_TOOLS = [
 
 # ── Agent turn (the only model entry point) ─────────────────────────────────────
 def recover_entities_from_tool_events(raw_text: str, tool_events: Optional[list] = None) -> str:
-    """Back-fill contract entities the model dropped after a failed tool round.
+    """Back-fill contract entities the model dropped after a tool round.
 
     The tool-call arguments are the model's own extraction. When the final JSON omits a
     value that an earlier tool call carried — seen live on 2026-09-17: the model called
     Check_Doctor_Availability with the doctor name, then emitted a contract with
     entities.doctor_name null, so the saved state lost the doctor and the next turn
-    re-asked the patient — this restores it. Recovery only fills EMPTY values; it never
-    overwrites what the contract already carries and never touches non-JSON text (the
-    repair chain owns that path).
+    re-asked the patient — this restores it. Rules: only SUCCESSFUL tool calls count
+    (a failed call's arguments were guesses the tool could not serve — an assumed date
+    must never harden into entities.date); the LAST matching call wins (a corrected
+    second call outranks a reflexive first one); only EMPTY contract values are filled;
+    non-JSON text is untouched (the repair chain owns that path).
     """
     import re
 
@@ -326,29 +328,35 @@ def recover_entities_from_tool_events(raw_text: str, tool_events: Optional[list]
         return str(raw_text or "")
     uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
     changed = False
+    # Last matching event wins: the model may call the tool reflexively with the OLD
+    # doctor (from situation.current_booking) before the corrected call — the newest
+    # call is the one it settled on (reviewer-verified switch-away resurrection).
+    # Failed calls are skipped: their arguments were guesses the tool could not serve,
+    # and an assumed date must never harden into entities.date.
+    candidates: Dict[str, Any] = {}
     for event in tool_events or []:
         if not isinstance(event, dict):
+            continue
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if result.get("error") or result.get("error_code") or result.get("input_error"):
             continue
         args = event.get("arguments") if isinstance(event.get("arguments"), dict) else {}
         name = str(event.get("name") or "")
         if name == "Check_Doctor_Availability":
             doctor = str(args.get("doctor_id") or "").strip()
-            if doctor and not uuid_re.match(doctor) and not str(entities.get("doctor_name") or "").strip():
-                entities["doctor_name"] = doctor
-                changed = True
-            requested_date = str(args.get("requested_date") or "").strip()
-            if requested_date and not str(entities.get("date") or "").strip():
-                entities["date"] = requested_date
-                changed = True
-        service_id = str(args.get("service_id") or "").strip()
-        if service_id and not str(entities.get("service_id") or "").strip():
-            entities["service_id"] = service_id
-            changed = True
+            if doctor and not uuid_re.match(doctor):
+                candidates["doctor_name"] = doctor
+            service_id = str(args.get("service_id") or "").strip()
+            if service_id:
+                candidates["service_id"] = service_id
         if name == "Get_My_Appointments":
             reference = str(args.get("booking_number") or "").strip()
-            if reference and not str(entities.get("reference") or "").strip():
-                entities["reference"] = reference
-                changed = True
+            if reference:
+                candidates["reference"] = reference
+    for field, value in candidates.items():
+        if value and not str(entities.get(field) or "").strip():
+            entities[field] = value
+            changed = True
     if not changed:
         return str(raw_text or "")
     parsed["entities"] = entities

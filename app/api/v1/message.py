@@ -98,19 +98,25 @@ def _contract_v3_of(normalized_agent: Dict[str, Any], adapted: Dict[str, Any]) -
 # An in-process lock queues the second message until the first turn finishes; it then
 # runs against the FRESH state. Single-replica deployment (Railway); multi-replica
 # deployments would need a shared lock (Redis/DB advisory lock).
-_CONVERSATION_LOCKS: Dict[str, asyncio.Lock] = {}
-_CONVERSATION_LOCK_WAITERS: Dict[str, int] = {}
-_CONVERSATION_LOCKS_GUARD = asyncio.Lock()
+#
+# Concurrency notes (post adversarial review 2026-09-18):
+#   - WeakValueDictionary: a parked acquire() frame keeps the lock alive, so a waiter
+#     can never end up on an evicted lock while a newcomer mints a fresh one (the
+#     eviction race that re-opened the double-turn window); idle locks are GC'd.
+#   - The acquire waits on a TASK, not wait_for: on some CPython versions
+#     wait_for(acquire()) can raise TimeoutError on the very call that granted the
+#     lock, which would brick the conversation until restart. task.done() is decisive.
+_CONVERSATION_LOCKS = __import__("weakref").WeakValueDictionary()
 _CONVERSATION_LOCK_WAIT_SECONDS = 90.0
 
 
 def _lock_key_of(body: Dict[str, Any]) -> str:
-    """Mirror normalize's conversation-id chain (conversation_id|conversationId|thread_id|chat_id)
-    — keying on the raw body key alone left thread_id senders unserialized."""
+    """Mirror normalize's conversation-id chain (conversation_id|conversationId|thread_id|chat_id),
+    lowercased — uuids are case-insensitive in the DB but the lock dict is not."""
     for key in ("conversation_id", "conversationId", "thread_id", "chat_id"):
         value = body.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return value.strip().lower()
     return ""
 
 
@@ -132,21 +138,23 @@ async def process_patient_message(request: Request,
                                            "conversation_id": conversation_key})
 
     turn_lock: Optional[asyncio.Lock] = None
+    acquire_task: Optional[asyncio.Task] = None
     lock_acquired = False
     if conversation_key:
-        async with _CONVERSATION_LOCKS_GUARD:
-            turn_lock = _CONVERSATION_LOCKS.setdefault(conversation_key, asyncio.Lock())
-            _CONVERSATION_LOCK_WAITERS[conversation_key] = _CONVERSATION_LOCK_WAITERS.get(conversation_key, 0) + 1
-        try:
-            await asyncio.wait_for(turn_lock.acquire(), timeout=_CONVERSATION_LOCK_WAIT_SECONDS)
-            lock_acquired = True
-        except asyncio.TimeoutError:
-            # Never drop the message silently: persist it through the SAME deferred-batch
-            # mechanism the burst gate uses, so the deferred worker replays it later.
+        turn_lock = _CONVERSATION_LOCKS.setdefault(conversation_key, asyncio.Lock())
+        acquire_task = asyncio.ensure_future(turn_lock.acquire())
+        done, _pending = await asyncio.wait({acquire_task}, timeout=_CONVERSATION_LOCK_WAIT_SECONDS)
+        if acquire_task not in done:
+            # Queue cap hit: never drop the message silently — persist it through the
+            # SAME deferred-batch mechanism the burst gate uses, so the deferred worker
+            # replays it later. The parked acquire is cancelled (modern asyncio releases
+            # the lock if cancellation lands after a grant).
+            acquire_task.cancel()
             logger.warning("k2.request.turn_queue_timeout — deferring behind the active turn",
                            extra={"correlation_id": correlation_id, "conversation_id": conversation_key})
             deferred_payload = await _defer_behind_active_turn(body, raw_headers, raw_body)
             return K2JSONResponse(status_code=200, content=deferred_payload)
+        lock_acquired = True
     try:
         out = await _run(body, raw_headers, raw_body)
         logger.info("k2.request.done", extra={"correlation_id": correlation_id,
@@ -164,18 +172,8 @@ async def process_patient_message(request: Request,
         return K2JSONResponse(status_code=500, content={"ok": False, "error_code": "INTERNAL_ERROR",
                                                         "correlation_id": correlation_id})
     finally:
-        if turn_lock is not None:
-            if lock_acquired:
-                turn_lock.release()
-            async with _CONVERSATION_LOCKS_GUARD:
-                remaining = _CONVERSATION_LOCK_WAITERS.get(conversation_key, 1) - 1
-                if remaining <= 0:
-                    _CONVERSATION_LOCK_WAITERS.pop(conversation_key, None)
-                    # Evict when nobody holds or waits — otherwise the dict grows forever.
-                    if not turn_lock.locked():
-                        _CONVERSATION_LOCKS.pop(conversation_key, None)
-                else:
-                    _CONVERSATION_LOCK_WAITERS[conversation_key] = remaining
+        if lock_acquired and turn_lock is not None:
+            turn_lock.release()
 
 
 async def _defer_behind_active_turn(body: Dict[str, Any], raw_headers: Dict[str, str],
@@ -245,13 +243,16 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
 
     # ── L09 Check Duplicate Message → Respond Duplicate (200) ──────────────────
     # Divergence (2026-09-18): a duplicate is suppressed ONLY when the first attempt
-    # actually delivered a reply. A duplicate with no outgoing row means the previous
-    # attempt died mid-turn — suppressing it left the patient permanently unanswered;
-    # the turn is re-run instead (the operation claim ledger keeps mutations safe).
+    # actually delivered a non-empty reply — and the stored reply text travels back so
+    # the sender can redeliver it. A duplicate with no delivered content means the
+    # previous attempt died mid-turn; suppressing it left the patient permanently
+    # unanswered — the turn is re-run instead (the claim ledger keeps mutations safe).
     if conditions_pre.if_check_duplicate_message(incoming_message):
-        if await repository.has_outgoing_reply(normalized):
+        delivered_reply = await repository.get_outgoing_reply(normalized)
+        if delivered_reply:
             raise _Exit({"ok": True, "duplicate": True,
                          "idempotency_key": normalized.get("idempotency_key"),
+                         "reply_text": delivered_reply,
                          "message": "already_processed"}, status_code=200)
         logger.info("k2.duplicate_without_delivered_reply — re-running the interrupted turn",
                     extra={"correlation_id": _correlation_of(normalized)})
@@ -349,7 +350,11 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             {"saved": True},
             {"saved": True},
             replay_guard,
-            replay_reply or (policy.get("output") or {}).get("rendered_reply"),
+            # Reviewer-verified: policy["output"] does not exist — the old dead read
+            # yielded reply_text=None and an empty outgoing row that then poisoned
+            # has_outgoing_reply forever. The deterministic replay reply (with the
+            # booking number) lives on the replay evaluation itself.
+            replay_reply or (replay_eval.get("system_decision") or {}).get("final_reply"),
             policy,
             _now_iso(),
         )
@@ -565,12 +570,16 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                     "decision": decision, "normalized": normalized, "claim": claim_result})
                 exec_result = exec_reschedule_result
         except Exception:
+            # A raise here may mean the mutation committed and the transport died — the
+            # outcome is UNKNOWN, not provably failed. INCONCLUSIVE keeps the ledger's
+            # honest escalate path; FAILED_FINAL would harden "don't know" into
+            # "already processed, never again" for the patient.
             if claim_applied.get("operation_id"):
                 try:
                     await repository.finalize_operation({
                         "finalize_clinic_id": normalized.get("clinic_id"),
                         "finalize_operation_id": claim_applied.get("operation_id"),
-                        "finalize_status": "FAILED_FINAL",
+                        "finalize_status": "INCONCLUSIVE",
                         "finalize_mutation_status": "UNKNOWN",
                     })
                 except Exception:
@@ -583,6 +592,8 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         # "normalized"/"decision", so every successful mutation was finalized
         # CHILD_CONTRACT_INVALID → INCONCLUSIVE and the patient was told the
         # operation failed. merge_operation_completion consumes the FINALIZE row.
+        # INSIDE the guarded region (reviewer-verified): a crash here after a
+        # successful mutation would otherwise strand the ledger IN_PROGRESS forever.
         if exec_result is not None:
             execution_id = normalized.get("source_event_id") or _correlation_of(normalized)
             envelope = stages_post.validate_child_envelope(exec_result, {
@@ -676,9 +687,14 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     if not rendered_reply:
         # Model-first, always. Every model-authored candidate is tried before the single
         # infrastructure notice below. No response-code template is consulted: a rigid
-        # prewritten sentence must never stand in for the agent's own words.
+        # prewritten sentence must never stand in for the agent's own words. EXCEPTION
+        # (reviewer-verified 2026-09-18): when the composer rejected a fabrication and
+        # the turn carries a DETERMINISTIC final_reply (claim/replay decisions — the
+        # fact-safe text with the booking number), it outranks the primary model's
+        # ungrounded draft, which is exactly the text grounding refused to ship.
         rendered_reply = str(
-            policy.get("agent_reply")
+            (decision or {}).get("final_reply")
+            or policy.get("agent_reply")
             or normalized_agent_output.get("agent_reply")
             or repaired_result.get("agent_reply")
             or base_extracted.get("agent_reply")
@@ -702,10 +718,28 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     # None), so nothing has to be cleared here. The metadata still travels for the audit.
     guard_for_delivery = guard
 
-    # ── L65-66 Derive Actions + audit + AI usage ───────────────────────────────
+    # ── L65-66 Derive Actions → Handoff → audit + AI usage ─────────────────────
+    # Handoff runs BEFORE the audit write so a contained handoff failure is visible
+    # in the audit row (the flag used to be set after the entry was already logged).
     actions = contract_adapter.derive_actions({
         "current": extracted or normalized_agent or {}, "system_orchestrator": decision,
         "normalize_validate": normalized})
+    if conditions_pre.if_handoff_required(actions):
+        handoff_input = stages_post.prepare_handoff_input(extracted or {}, {
+            "normalized": normalized, "system_orchestrator": decision, "actions": actions,
+            "normalize_validate": normalized})
+        handoff_payload = (handoff_input or {}).get("handoff_input") or handoff_input or {}
+        # Divergence (2026-09-17): the ported Restore Handoff Context raises when the
+        # handoff RPC fails, which aborted the whole turn — the patient asking for a
+        # human got a 500 with no reply and no state save. The handoff failure is now
+        # contained: the reply and state save still happen, flagged in the audit.
+        try:
+            handoff_result = await handoff_service.create_or_reuse_handoff(
+                handoff_service.HandoffChildInput(**_handoff_kwargs(handoff_payload)))
+            stages_post.restore_handoff_context(handoff_result, handoff_input)
+        except Exception:
+            logger.exception("handoff failed — delivering the reply without the handoff link")
+            extracted["handoff_failed"] = True
     audit_entry = stages_pre.build_audit_entry(extracted or {}, {
         "validate_repaired_contract_deterministic": repaired_result,
         "normalize_agent_output_deterministic": normalized_agent_output,
@@ -729,6 +763,8 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "composer_ms": composer_ms,
         "agent_llm_calls": len((timing or {}).get("agent_usage") or []),
     }
+    if extracted.get("handoff_failed"):
+        audit_entry["handoff_failed"] = True
     await repository.log_agent_audit_entry(audit_entry)
     composer_usage = (composer_result or {}).get("usage") or {}
     usage_rows = stages_pre.compute_ai_request_usage_deterministic({}, {
@@ -744,27 +780,16 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     for usage_row in (usage_rows or []):
         await repository.insert_ai_request_usage(usage_row)
 
-    # ── L66-70 IF Handoff Required → Handoff Child → Restore → Read Fresh Offer ─
-    if conditions_pre.if_handoff_required(actions):
-        handoff_input = stages_post.prepare_handoff_input(extracted or {}, {
-            "normalized": normalized, "system_orchestrator": decision, "actions": actions,
-            "normalize_validate": normalized})
-        handoff_payload = (handoff_input or {}).get("handoff_input") or handoff_input or {}
-        # Divergence (2026-09-17): the ported Restore Handoff Context raises when the
-        # handoff RPC fails, which aborted the whole turn — the patient asking for a
-        # human got a 500 with no reply and no state save. The handoff failure is now
-        # contained: the reply and state save still happen, flagged in the audit.
-        try:
-            handoff_result = await handoff_service.create_or_reuse_handoff(
-                handoff_service.HandoffChildInput(**_handoff_kwargs(handoff_payload)))
-            stages_post.restore_handoff_context(handoff_result, handoff_input)
-        except Exception:
-            logger.exception("handoff failed — delivering the reply without the handoff link")
-            extracted["handoff_failed"] = True
     fresh_offer = await repository.read_fresh_offer_midturn({"normalized": normalized})
 
     # ── L71-77 Build Persistent Conversation State → save with stale retry ─────
-    persistent_state = stages_pre.build_persistent_conversation_state(fresh_offer or {}, {
+    # Wiring (fixed 2026-09-18, reviewer-verified): the node reads $json.booking_number /
+    # $json.output / $json.system_decision from the DOWNSTREAM merged item — the previous
+    # call passed the 2-column fresh-offer row as item, so a successful create saved
+    # booking_number=None and operation_state=EXECUTING (the reply promised a number the
+    # next turn's state did not have, and the replay gate could never match).
+    state_item = {**(decision or {}), **(policy or {}), "output": extracted or {}}
+    persistent_state = stages_pre.build_persistent_conversation_state(state_item, {
         "normalize_validate": normalized, "get_clinic_context": clinic_context,
         "system_orchestrator_policy": decision, "get_conversation_state": state_row,
         "read_fresh_offer_midturn": fresh_offer or {}})

@@ -1413,9 +1413,12 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
             _dig(orch_output, "system_decision", "booking_context", "doctor_id"),
             None,
         ))
+        # .lower(): _STATE_TERMINAL is lowercase; the saved operation_state is canonical
+        # uppercase ("COMPLETED") — the .upper() form made this guard dead code
+        # (reviewer-verified: a completed booking's doctor was resurrected on restart).
         previous_operation_terminal = _js_string(_first_truthy(
             _prop(previous, "operation_state"), _prop(previous, "operation_status"), ""
-        )).upper() in _STATE_TERMINAL
+        )).lower() in _STATE_TERMINAL
         if restart_names_doctor or previous_operation_terminal:
             previous_booking_fallback: Any = {}
         else:

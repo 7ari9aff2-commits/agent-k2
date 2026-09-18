@@ -108,7 +108,7 @@ def test_non_ascii_token_header_returns_401_not_500():
         object.__setattr__(config_mod.settings, "K2_INTERNAL_TOKEN", original)
 
 
-def test_has_outgoing_reply_detects_delivered_reply(monkeypatch):
+def test_get_outgoing_reply_returns_delivered_content(monkeypatch):
     import hashlib
 
     from app.db import repository
@@ -125,7 +125,7 @@ def test_has_outgoing_reply_detects_delivered_reply(monkeypatch):
         async def fetchrow(self, sql, param):
             expected = hashlib.md5((key + ":outgoing").encode()).hexdigest()
             assert param.replace("-", "") == expected.replace("-", "")
-            return {"present": True}
+            return {"content": "أهلاً بك! كيف أقدر أساعدك؟"}
 
     class _Pool:
         def acquire(self):
@@ -135,7 +135,29 @@ def test_has_outgoing_reply_detects_delivered_reply(monkeypatch):
         return _Pool()
 
     monkeypatch.setattr("app.db.pool.get_pool", _pool_factory)
-    assert asyncio.run(repository.has_outgoing_reply({"idempotency_key": key})) is True
+    assert asyncio.run(repository.get_outgoing_reply({"idempotency_key": key})) == \
+        "أهلاً بك! كيف أقدر أساعدك؟"
+    # A duplicate with no DELIVERED content must read as None — the turn re-runs.
+    empty_ctx = _Ctx()
+    empty_ctx.fetchrow = _Ctx.fetchrow
 
-    monkeypatch.setattr("app.db.pool.get_pool", _pool_factory)
-    assert asyncio.run(repository.has_outgoing_reply({"idempotency_key": ""})) is False
+    class _EmptyCtx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def fetchrow(self, sql, param):
+            return None
+
+    class _EmptyPool:
+        def acquire(self):
+            return _EmptyCtx()
+
+    async def _empty_factory():
+        return _EmptyPool()
+
+    monkeypatch.setattr("app.db.pool.get_pool", _empty_factory)
+    assert asyncio.run(repository.get_outgoing_reply({"idempotency_key": key})) is None
+    assert asyncio.run(repository.get_outgoing_reply({"idempotency_key": ""})) is None

@@ -445,30 +445,31 @@ async def get_active_handoff_request(normalized: dict) -> dict:
     return dict(row) if row else {}
 
 
-async def has_outgoing_reply(ctx: dict) -> bool:
-    """True when the turn for this idempotency key already produced a logged reply.
+async def get_outgoing_reply(ctx: dict) -> Optional[str]:
+    """The delivered reply text for this idempotency key, or None.
 
     The outgoing Log Outgoing Message row's message_id is md5(<idempotency_key> || ':outgoing')
-    (queries.py Log_Outgoing_Message). A duplicate inbound WITHOUT this row means the first
-    attempt died mid-turn; suppressing it as a duplicate would leave the patient permanently
-    unanswered — the caller re-runs the turn instead (the operation claim ledger makes that
-    safe for mutations).
+    (queries.py Log_Outgoing_Message). Non-empty content is REQUIRED: an empty outgoing row
+    (a turn that logged nothing) must not suppress a retry — the patient never received
+    anything. With content present, a channel retry gets the SAME reply back instead of
+    silence, even though the turn itself will not re-run (the claim ledger keeps
+    mutations safe).
     """
     import hashlib
 
     key = _js_str(_js_or((ctx or {}).get("idempotency_key"), ""))
     if not key:
-        return False
+        return None
     from app.db.pool import get_pool
 
     outgoing_id = hashlib.md5((key + ":outgoing").encode("utf-8")).hexdigest()
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT EXISTS(SELECT 1 FROM messages WHERE id = $1::uuid) AS present",
+            "SELECT content FROM messages WHERE id = $1::uuid AND NULLIF(content, '') IS NOT NULL",
             outgoing_id,
         )
-    return bool(row and row["present"])
+    return (str(row["content"]) if row and row["content"] else None) or None
 
 
 async def read_fresh_offer_midturn(ctx: dict) -> dict:

@@ -19,14 +19,34 @@ def _contract(entities: dict) -> str:
 AVAILABILITY_EVENT = {
     "name": "Check_Doctor_Availability",
     "arguments": {"doctor_id": "د. أحمد الحنكشلاوي", "requested_date": "2026-09-20", "service_id": None},
-    "result": {"error": "INVALID_OR_MISSING_IDENTIFIER"},
+    "result": {"success": True},
 }
 
 
-def test_fills_empty_entities_from_tool_arguments():
+def test_fills_empty_entities_from_successful_tool_arguments():
     out = json.loads(recover_entities_from_tool_events(_contract({"doctor_name": None}), [AVAILABILITY_EVENT]))
     assert out["entities"]["doctor_name"] == "د. أحمد الحنكشلاوي"
-    assert out["entities"]["date"] == "2026-09-20"
+    # An assumed requested_date is NOT hardened into entities.date (reviewer finding:
+    # the patient never stated it, and a failed/assumed call must not book a day).
+    assert out["entities"].get("date") in (None, "")
+
+
+def test_skips_failed_tool_calls_entirely():
+    failed = dict(AVAILABILITY_EVENT, result={"error": "connection timeout"})
+    out = json.loads(recover_entities_from_tool_events(_contract({"doctor_name": None}), [failed]))
+    assert out["entities"]["doctor_name"] is None
+
+
+def test_last_matching_call_wins():
+    old_call = {"name": "Check_Doctor_Availability",
+                "arguments": {"doctor_id": "د. أحمد", "requested_date": "2026-09-20"},
+                "result": {"success": True}}
+    corrected_call = {"name": "Check_Doctor_Availability",
+                      "arguments": {"doctor_id": "د. سارة", "requested_date": "2026-09-21"},
+                      "result": {"success": True}}
+    out = json.loads(recover_entities_from_tool_events(
+        _contract({"doctor_name": None}), [old_call, corrected_call]))
+    assert out["entities"]["doctor_name"] == "د. سارة"
 
 
 def test_never_overwrites_values_the_contract_already_carries():

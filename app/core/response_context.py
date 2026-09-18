@@ -287,7 +287,7 @@ def _strip_code_fence(raw: str) -> str:
 _DIGIT_FOLD = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 _CLOCK_TOKEN_RE = re.compile(r"\b([0-9]{1,2}:[0-9]{2})\b")
 _ISO_DATE_TOKEN_RE = re.compile(r"\b([0-9]{4}-[0-9]{2}-[0-9]{2})\b")
-_NUMERIC_TOKEN_RE = re.compile(r"\b[0-9][0-9:٫/.-]{2,}\b")
+_ISO_DATETIME_TOKEN_RE = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2})")
 
 
 def _fold_digits(text: Any) -> str:
@@ -345,9 +345,11 @@ def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, A
     """Deterministic fabrication guard on the reply's concrete values.
 
     Dates and clock times stated in the reply must trace to a cited fact (12h/24h and
-    day/month renderings count). Any OTHER numeric run (prices, durations, ages,
-    counts like "3 مواعيد") is deliberately NOT enforced — paraphrasing those is
-    legitimate and rejecting them burned the composer repair budget on false alarms.
+    day/month renderings count; ISO datetimes sliced on 'T' — a stored
+    "2026-09-20T14:30:00+00:00" legitimately renders as 14:30). Any OTHER numeric run
+    (prices, durations, ages, counts like "3 مواعيد") is deliberately NOT enforced —
+    paraphrasing those is legitimate and rejecting them burned the composer repair
+    budget on false alarms.
     """
     facts_by_id = {f.get("id"): f.get("value") for f in (context.get("facts") or []) if isinstance(f, dict)}
     allowed: set = set()
@@ -364,6 +366,10 @@ def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, A
             allowed_variants |= _date_variants(iso)
         for clock in _CLOCK_TOKEN_RE.findall(value):
             allowed_variants |= _clock_variants(clock)
+        # ISO datetimes ("2026-09-20T14:30:00+00:00") — \b never matches before 'T',
+        # so slice the date and clock halves explicitly.
+        for date_half, clock_half in _ISO_DATETIME_TOKEN_RE.findall(value):
+            allowed_variants |= _date_variants(date_half) | _clock_variants(clock_half)
     allowed |= allowed_variants
 
     for token in _ISO_DATE_TOKEN_RE.findall(reply_folded):
@@ -445,12 +451,20 @@ def validate_composer_output(raw: Any, context: Dict[str, Any]) -> Tuple[Optiona
     errors.extend(_value_grounding_errors(reply or "", clean_evidence, context))
 
     # A completed mutation must surface its booking number — it is the patient's only
-    # reference to the appointment.
+    # reference to the appointment. Scoped to THIS TURN's authoritative sources
+    # (execution results / policy outcome / decision): the raw conversation state may
+    # still carry a PREVIOUS completed booking's number, and demanding both numbers in
+    # one reply rejected correct drafts (reviewer-verified).
     response_code = str(context.get("response_code") or "")
     if response_code in {"APPOINTMENT_CREATED", "RESCHEDULE_COMPLETED", "CANCEL_COMPLETED", "IDEMPOTENT_REPLAY"}:
-        booking_numbers = _collect_fact_values(context.get("facts") or [], key="booking_number")
-        for number in booking_numbers:
-            if _fold_digits(number) not in _fold_digits(reply or ""):
+        this_turn_numbers: set = set()
+        for fact in (context.get("facts") or []):
+            if not isinstance(fact, dict):
+                continue
+            if str(fact.get("id") or "").split(".")[0] in {"execution", "policy", "decision"}:
+                this_turn_numbers |= _collect_fact_values(fact.get("value"), key="booking_number")
+        for number in this_turn_numbers:
+            if number and _fold_digits(number) not in _fold_digits(reply or ""):
                 errors.append(f"reply_missing_booking_number:{number}")
 
     if errors:
