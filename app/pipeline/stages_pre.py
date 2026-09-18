@@ -1524,15 +1524,22 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
             "time": _first_truthy(_prop(current_context, "time"), None),
             "slot_id": _first_truthy(_prop(current_context, "slot_id"), None),
         }
+    # P42c companion (journey T6, 2026-09-19): the orchestrator's bound
+    # confirmation_target is the slot authority — NAO's booking_context never sees a
+    # tool-bound slot, so without this fallback the saved booking_context/slot_state
+    # lost slot_id and the transition guard's create data_valid failed at the affirm
+    # turn (INVALID_STATE_TRANSITION instead of execution).
+    orch_bound_target: Any = _dig(decision, "confirmation_target")
+    orch_bound_target = orch_bound_target if isinstance(orch_bound_target, dict) else {}
     slot_state: Dict[str, Any] = {
         "doctor_id": _keep(_prop(current_slot, "doctor_id"), _prop(previous_slot, "doctor_id")),
         "doctor_name": _keep(_prop(current_slot, "doctor_name"), _prop(previous_slot, "doctor_name")),
         "service_id": _keep(_prop(current_slot, "service_id"), _prop(previous_slot, "service_id")),
         "service_name": _keep(_prop(current_slot, "service_name"), _prop(previous_slot, "service_name")),
         "appointment_type": _keep(_prop(current_slot, "appointment_type"), _prop(previous_slot, "appointment_type")),
-        "date": _keep(_prop(current_slot, "date"), _prop(previous_slot, "date")),
-        "time": _keep(_prop(current_slot, "time"), _prop(previous_slot, "time")),
-        "slot_id": _keep(_prop(current_slot, "slot_id"), _prop(previous_slot, "slot_id")),
+        "date": _keep(_prop(current_slot, "date"), _first_truthy(_prop(previous_slot, "date"), _prop(orch_bound_target, "date"), None)),
+        "time": _keep(_prop(current_slot, "time"), _first_truthy(_prop(previous_slot, "time"), _prop(orch_bound_target, "time"), None)),
+        "slot_id": _keep(_prop(current_slot, "slot_id"), _first_truthy(_prop(previous_slot, "slot_id"), _prop(orch_bound_target, "slot_id"), None)),
         "booking_number": _keep(_prop(current_slot, "booking_number"), _prop(previous_slot, "booking_number")),
     }
     booking_context: Dict[str, Any] = {
@@ -1541,9 +1548,9 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
         "service_id": _keep(_prop(current_context, "service_id"), _first_truthy(_prop(previous_booking_fallback, "service_id"), _prop(slot_state, "service_id"), None)),
         "service_name": _keep(_prop(current_context, "service_name"), _first_truthy(_prop(previous_booking_fallback, "service_name"), _prop(slot_state, "service_name"), None)),
         "appointment_type": _keep(_prop(current_context, "appointment_type"), _first_truthy(_prop(previous_booking_fallback, "appointment_type"), _prop(slot_state, "appointment_type"), None)),
-        "slot_id": _keep(_prop(current_context, "slot_id"), _first_truthy(_prop(previous_booking_fallback, "slot_id"), _prop(slot_state, "slot_id"), None)),
-        "date": _keep(_prop(current_context, "date"), _first_truthy(_prop(previous_booking_fallback, "date"), _prop(slot_state, "date"), None)),
-        "time": _keep(_prop(current_context, "time"), _first_truthy(_prop(previous_booking_fallback, "time"), _prop(slot_state, "time"), None)),
+        "slot_id": _keep(_prop(current_context, "slot_id"), _first_truthy(_prop(previous_booking_fallback, "slot_id"), _prop(slot_state, "slot_id"), _prop(orch_bound_target, "slot_id"), None)),
+        "date": _keep(_prop(current_context, "date"), _first_truthy(_prop(previous_booking_fallback, "date"), _prop(slot_state, "date"), _prop(orch_bound_target, "date"), None)),
+        "time": _keep(_prop(current_context, "time"), _first_truthy(_prop(previous_booking_fallback, "time"), _prop(slot_state, "time"), _prop(orch_bound_target, "time"), None)),
         "booking_number": _keep(_prop(current_context, "booking_number"), _first_truthy(_prop(previous_booking_fallback, "booking_number"), _prop(slot_state, "booking_number"), None)),
     }
     persistent_prior_reference = bool(

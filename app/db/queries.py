@@ -1338,3 +1338,20 @@ LIMIT 1;'''
 QUERY_SAVE_CONVERSATION_STATE_RPC = r'''
 SELECT * FROM public.k2_save_conversation_state($1::uuid, $2::jsonb, $3::integer) LIMIT 1
 '''
+
+# Port-added (2026-09-19): double-booking guard. A create that committed but whose
+# process died before the state save leaves the conversation at AWAIT_CONFIRMATION;
+# the patient's re-affirm mints a NEW operation_id the claim ledger never saw, so
+# only this slot-scoped check refuses the second booking. Mirrors the 'scheduled'
+# status the create executor books with and the appointments columns the resolver reads.
+QUERY_FIND_ACTIVE_APPOINTMENT_FOR_SLOT = r'''SELECT
+  a.id,
+  a.public_id,
+  a.booking_number
+FROM public.appointments a
+WHERE a.clinic_id = $1::uuid
+  AND a.patient_id = $2::uuid
+  AND a.slot_id = NULLIF($3::text, '')::uuid
+  AND a.deleted_at IS NULL
+  AND a.appointment_status = 'scheduled'
+LIMIT 1;'''

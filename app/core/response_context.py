@@ -427,10 +427,15 @@ def try_ground_primary_reply(draft: str, context: Dict[str, Any]) -> Optional[Di
         {**context, "facts": [{"id": fid, "value": facts_by_id.get(fid)} for fid in cited]})
     code = str(context.get("response_code") or "")
     if code in {"APPOINTMENT_CREATED", "RESCHEDULE_COMPLETED", "CANCEL_COMPLETED", "IDEMPOTENT_REPLAY"}:
-        numbers: set = set()
-        for fid in cited:
-            _collect_fact_values(facts_by_id.get(fid), key="booking_number", out=numbers)
-        for number in numbers:
+        # Same rule the composer is held to, same scoping: the booking number from
+        # THIS TURN's authoritative sources (execution/policy/decision) must surface
+        # regardless of what the draft cites — otherwise a reply that cites nothing
+        # (a bare acknowledgment) dodges the requirement and ships without it.
+        this_turn_numbers: set = set()
+        for fact in facts:
+            if str(fact.get("id") or "").split(".")[0] in {"execution", "policy", "decision"}:
+                _collect_fact_values(fact.get("value"), key="booking_number", out=this_turn_numbers)
+        for number in this_turn_numbers:
             if number and _fold_digits(number) not in folded:
                 errors.append(f"reply_missing_booking_number:{number}")
     if errors:

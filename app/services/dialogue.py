@@ -115,6 +115,14 @@ def build_user_message(
     bc = st.get("booking_context") or {}
     conf = st.get("confirmation_target") if (st.get("confirmation_target") and st.get("confirmation_state") == "required") else None
     offered_raw = st.get("pending_offer", {}).get("alternatives", []) if isinstance(st.get("pending_offer"), dict) and isinstance(st.get("pending_offer", {}).get("alternatives"), list) else []
+    # P42c payload guard (journey root-cause 2026-09-19): while a booking confirmation
+    # is pending, the offered list must NOT reach the model. The prompt precedence puts
+    # "offered list + accepts → selection set" ABOVE "pending confirmation", so the
+    # affirm turn classified as a slot pick and the decision table re-bound
+    # CONFIRMATION_REQUIRED forever (journey T6). The offer stays in state — the
+    # deterministic rows read it from there; only the payload is cleared.
+    if conf:
+        offered_raw = []
     review = st.get("patient_data_review") or None
     collecting = not conf
     appt = bc.get("appointment_type") or None

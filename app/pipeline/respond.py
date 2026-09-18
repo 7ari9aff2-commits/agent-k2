@@ -24,9 +24,6 @@ def _has_transport_error(value: Optional[Dict[str, Any]]) -> bool:
                 or status_code >= 400 or status >= 400)
 
 
-_SAVE_FAILED_REPLY = "تعذر حفظ حالة المحادثة حاول مرة أخرى"
-
-
 def build_final_response(
     normalized: Dict[str, Any],
     outgoing_message_id: Optional[str],
@@ -39,14 +36,14 @@ def build_final_response(
 ) -> Dict[str, Any]:
     """Source node: Respond To Patient (responseBody expression).
 
-    reply_text precedence:
-      1. state-save transport/stale failure -> the save-failure notice (infrastructure)
-      2. rendered_reply — the model-authored reply, always preferred
-      3. _reply_guard.override — legacy field, now always None
+    reply_text precedence (post no-static-replies, 2026-09-18):
+      1. rendered_reply — the model-authored reply, always preferred; it ships even
+         when the state save failed (the failure travels in metadata, and when
+         NOTHING was authored the turn suppresses so the retry re-runs it).
+      2. _reply_guard.override — legacy field, now always None.
 
-    The model owns the conversation: no response-code template may replace its words.
-    apply_reply_guard no longer writes override text at all, and this ordering makes that
-    guarantee structural rather than incidental.
+    The legacy save-failure notice is gone: apply_reply_guard no longer writes
+    override text and no prewritten sentence ever stands in for the model.
     """
     initial = save_initial or {}
     retry = save_retry or {}

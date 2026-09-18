@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import time
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -92,6 +93,25 @@ def _contract_v3_of(normalized_agent: Dict[str, Any], adapted: Dict[str, Any]) -
     return (adapted or {}).get("contract_v3") or {}
 
 
+def _guard_slot_of(decision: Optional[Dict[str, Any]]) -> Any:
+    """Slot id for the double-booking guard: the canonical envelope booking_context
+    first, then the inner decision's booking_context / confirmation_target."""
+    if not isinstance(decision, dict):
+        return None
+    bc = decision.get("booking_context")
+    if isinstance(bc, dict) and bc.get("slot_id"):
+        return bc.get("slot_id")
+    sd = decision.get("system_decision")
+    if isinstance(sd, dict):
+        bc2 = sd.get("booking_context")
+        if isinstance(bc2, dict) and bc2.get("slot_id"):
+            return bc2.get("slot_id")
+        ct = sd.get("confirmation_target")
+        if isinstance(ct, dict) and ct.get("slot_id"):
+            return ct.get("slot_id")
+    return None
+
+
 # Per-conversation turn serialization (added 2026-09-18): two rapid messages from the
 # same patient used to run the pipeline concurrently — distinct idempotency keys mean
 # dedupe/claim never serialized them, and both could execute mutations (double booking).
@@ -151,6 +171,11 @@ async def clinic_token_usage(clinic_id: str, days: int = 30,
     20 most recent calls. Token-protected like the rest of the engine."""
     if not clinic_id:
         return K2JSONResponse(status_code=400, content={"ok": False, "error_code": "CLINIC_ID_REQUIRED"})
+    try:
+        uuid_mod.UUID(str(clinic_id))
+    except (ValueError, AttributeError, TypeError):
+        return K2JSONResponse(status_code=400, content={"ok": False, "error_code": "CLINIC_ID_INVALID"})
+    days = max(1, min(int(days), 365))
     summary = await repository.get_clinic_usage_summary({"clinic_id": clinic_id, "days": days})
     return K2JSONResponse(status_code=200, content={"ok": True, "usage": summary})
 
@@ -613,22 +638,41 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
         exec_result: Optional[Dict[str, Any]] = None
         try:
             if conditions_post.if_approved_create_action(decision):
-                exec_input = stages_post.prepare_execute_input({
-                    "conversation_state": state_row, "resolve_booking_ids": booking_ids_result,
-                    "apply_resolved_booking_ids": apply_ids_result, "system_orchestrator": decision,
-                    "normalize_validate": normalized})
-                exec_ctx = stages_post.prepare_execute_context(exec_input, {
-                    "normalize_validate": normalized, "system_orchestrator": decision,
-                    "conversation_state": state_row,
-                    "resolve_booking_ids": booking_ids_result,
-                    "apply_resolved_booking_ids": apply_ids_result,
-                    "clinic_context": clinic_context})
-                exec_create_result = await repository.execute_approved_create_appointment({
-                    "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {}),
-                    # Reviewer-verified: prepare_execute_input computes `notes` but its
-                    # output was discarded at the call site — $5 notes always bound "".
-                    "notes": (exec_input or {}).get("notes")})
-                exec_result = exec_create_result
+                # DOUBLE-BOOKING GUARD (2026-09-19): the claim ledger is keyed per
+                # operation_id, and a re-affirm after a lost state save mints a NEW one —
+                # only a slot-scoped existence check refuses the second booking for the
+                # same patient. When one already exists, its row becomes the executor
+                # result (the same direct-create envelope shape) and no new booking runs.
+                preexisting = await repository.find_active_appointment_for_slot({
+                    "clinic_id": normalized.get("clinic_id"),
+                    "patient_id": normalized.get("patient_id"),
+                    "slot_id": _guard_slot_of(decision)})
+                if preexisting:
+                    exec_create_result = {
+                        "success": True, "response_code": "APPOINTMENT_CREATED",
+                        "appointment_id": preexisting.get("id"),
+                        "booking_number": preexisting.get("booking_number"),
+                        "public_id": preexisting.get("public_id") or preexisting.get("booking_number"),
+                        "preexisting_slot": True,
+                    }
+                    exec_result = exec_create_result
+                else:
+                    exec_input = stages_post.prepare_execute_input({
+                        "conversation_state": state_row, "resolve_booking_ids": booking_ids_result,
+                        "apply_resolved_booking_ids": apply_ids_result, "system_orchestrator": decision,
+                        "normalize_validate": normalized})
+                    exec_ctx = stages_post.prepare_execute_context(exec_input, {
+                        "normalize_validate": normalized, "system_orchestrator": decision,
+                        "conversation_state": state_row,
+                        "resolve_booking_ids": booking_ids_result,
+                        "apply_resolved_booking_ids": apply_ids_result,
+                        "clinic_context": clinic_context})
+                    exec_create_result = await repository.execute_approved_create_appointment({
+                        "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {}),
+                        # Reviewer-verified: prepare_execute_input computes `notes` but its
+                        # output was discarded at the call site — $5 notes always bound "".
+                        "notes": (exec_input or {}).get("notes")})
+                    exec_result = exec_create_result
             elif conditions_post.if_approved_cancel_action(decision):
                 # Wiring (fixed 2026-09-18, reviewer-verified): the executor reads
                 # system_decision/operation_id from the TOP level of its item — the old
@@ -792,6 +836,15 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
             or base_extracted.get("agent_reply")
             or ""
         ).strip()
+        if rendered_reply and primary_grounded is None:
+            # Invariant-3 gate (2026-09-19): this fallback candidate is the same draft
+            # family the primary grounding check may have just rejected — with the
+            # composer down it would otherwise ship ungrounded (fabricated dates/times
+            # reachable during LLM degradation). It ships only through the same
+            # value-evidence check; otherwise the turn suppresses and the handoff
+            # below follows up.
+            if response_context.try_ground_primary_reply(rendered_reply, reply_context) is None:
+                rendered_reply = ""
 
     extracted = {
         **base_extracted,

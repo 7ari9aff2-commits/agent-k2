@@ -84,3 +84,73 @@ def test_claim_blocked_static_notice_never_reaches_the_patient(monkeypatch):
             "deterministic status notices are ledger metadata, not patient replies"
     assert r.get("suppress_reply") is True and r.get("reply_text") is None
     assert handoffs, "a suppressed turn must dispatch a follow-up handoff"
+
+
+def test_completed_mutation_reply_without_booking_number_fails_grounding():
+    """Same rule as the composer (2026-09-19): on a completed mutation the booking
+    number from THIS TURN's authoritative facts must surface — a reply that cites
+    nothing may not dodge the requirement (the old cited-only check let a bare
+    acknowledgment ship without it)."""
+    from app.core.response_context import try_ground_primary_reply
+
+    context = {
+        "response_code": "APPOINTMENT_CREATED",
+        "fact_ids": ["patient.current_message", "execution.create"],
+        "facts": [
+            {"id": "patient.current_message", "value": {"message": "أيوه أكد"}},
+            {"id": "execution.create", "value": {"success": True, "booking_number": "BK-240918-01"}},
+        ],
+    }
+    assert try_ground_primary_reply("أيوه صح ✅", context) is None
+    grounded = try_ground_primary_reply("تم الحجز بنجاح، رقم الحجز BK-240918-01", context)
+    assert grounded is not None and grounded["grounding_status"] == "supported"
+
+
+def test_ungrounded_fallback_suppressed_when_composer_down(monkeypatch):
+    """Invariant-3 gate (2026-09-19): with the composer down, the fallback candidate is
+    the SAME draft the primary grounding rejected — it must not ship ungrounded. The
+    turn suppresses and the handoff follows up instead."""
+    import json as _json
+
+    stub_io(monkeypatch)
+
+    # A draft carrying a clock value that exists in NO fact — grounding rejects it.
+    ungrounded = _json.dumps({
+        "schema_version": "k2.dialogue.v4", "reply": "تمام، الحجز الساعة 15:00 ✅",
+        "turn": {"intent": "booking_continuation", "relation_to_previous_turn": "follow_up"},
+        "confidence": 0.95, "ambiguous": [], "confirmation": {"intent": "none"},
+        "selection": {"kind": "none", "rank": None}, "entities": {},
+        "operation_proposal": {"type": "none", "requested": False}, "escalate": None,
+    }, ensure_ascii=False)
+
+    handoffs = []
+
+    async def spy_handoff(payload):
+        handoffs.append(payload)
+        return {"success": True}
+
+    async def failing_compose(context):
+        raise RuntimeError("gateway down")
+
+    async def agent_turn(um, context):
+        from app.services.dialogue import AgentTurnText
+        return AgentTurnText(ungrounded, tool_events=[], llm_calls=1, usage=[])
+
+    monkeypatch.setattr(runner_mod.dialogue, "call_primary_model_with_tool", agent_turn)
+    monkeypatch.setattr(runner_mod.dialogue, "call_repair_model",
+                        lambda prompt: _async_helper(ungrounded))
+    monkeypatch.setattr(runner_mod.dialogue, "compose_patient_reply", failing_compose)
+    monkeypatch.setattr(runner_mod.handoff_service, "create_or_reuse_handoff", spy_handoff)
+
+    r = asyncio.run(_run(valid_payload(message_text="احجزلي بكرة"), {}))
+    assert r.get("reply_text") is None
+    assert r.get("suppress_reply") is True
+    assert len(handoffs) == 1, "an ungrounded fallback must dispatch the human handoff"
+
+
+def _async_helper(value):
+    import asyncio
+
+    async def _a():
+        return value
+    return _a()

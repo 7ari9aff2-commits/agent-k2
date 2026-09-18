@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 
 import app.api.v1.message as runner_mod
@@ -101,7 +102,14 @@ def test_full_booking_journey(monkeypatch):
     monkeypatch.setattr(repo, "resolve_doctor_inquiry", lambda ctx: _async({}))
     monkeypatch.setattr(repo, "resolve_service_fact", lambda ctx: _async({}))
     monkeypatch.setattr(repo, "resolve_booking_ids", lambda ctx: _async({}))
-    monkeypatch.setattr(repo, "lookup_business_time_context", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "lookup_business_time_context", lambda ctx: _async({
+        # Production-shaped row: the gate verifies the SLOT against clinic hours —
+        # an empty row means TIMEZONE_NOT_CONFIGURED and blocks every execution.
+        # Slot 2026-09-24T10:30Z = Thursday 13:30 Riyadh (day_of_week 4, Sun=0).
+        "timezone": "Asia/Riyadh", "timezone_configured": True,
+        "business_hours": [{"day_of_week": 4, "open_time": "09:00", "close_time": "18:00"}],
+        "slot_found": True,
+        "start_time": "2026-09-24T10:30:00Z", "end_time": "2026-09-24T11:00:00Z"}))
     monkeypatch.setattr(repo, "persist_pending_confirmation", lambda ctx: _async({}))
     async def fake_fresh_offer(ctx):
         # Production parity: the availability tool persists a presented_offer mid-turn,
@@ -118,7 +126,6 @@ def test_full_booking_journey(monkeypatch):
 
     async def fake_create(ctx):
         exec_calls["ran"] = True
-        exec_calls["system_decision"] = (ctx or {}).get("system_decision")
         exec_calls["slot_id"] = (ctx or {}).get("slot_id")
         exec_calls["patient_phone"] = (ctx or {}).get("patient_phone")
         return {"id": APPOINTMENT, "success": True, "response_code": "APPOINTMENT_CREATED",
@@ -237,15 +244,131 @@ def test_full_booking_journey(monkeypatch):
     assert (bound.get("confirmation_target") or {}).get("slot_id") == SLOT,         json.dumps(bound.get("confirmation_target"), ensure_ascii=False)[:200]
 
     # ── T6: the patient affirms the booking → executor → identity persists ──
-    # With the P42 affirmative arm + the live-offer stub this now executes end to end.
+    # FIXED 2026-09-19 (P42c same-slot execute + offered payload guard): the affirm
+    # echo at AWAIT_CONFIRMATION now executes the bound target through the C1 gate.
+    # The asserts below are STRICT — any regression here fails the suite.
     r6 = asyncio.run(_run(payload("أيوه أكد", "evt-6"), {}))
-    # REMAINING LINK (next session, fresh context): the affirm at AWAIT_CONFIRMATION
-    # still does not reach c1_confirm_execute even with the whitelisted target —
-    # instrument the C1 gate inputs (cls/prior_target/binding_valid) at T6 to find
-    # the last drop. Everything before it is proven by T1-T5 asserts above.
-    sd = exec_calls.get("system_decision") or {}
-    if sd:
-        assert (sd.get("confirmation_target") or {}).get("slot_id") == SLOT
-        assert finalize_calls and finalize_calls[-1].get("finalize_status") == "COMPLETED"
-        assert "BK-240918-01" in json.dumps(saved_bodies[-1], ensure_ascii=False)
-        assert "BK-240918-01" in (r6.get("reply_text") or "")
+    assert exec_calls.get("ran") is True, "the affirm turn must execute the create"
+    assert exec_calls.get("slot_id") == SLOT, \
+        "the executor must receive the bound slot, got " + json.dumps(exec_calls, default=str)[:300]
+    assert finalize_calls and finalize_calls[-1].get("finalize_status") == "COMPLETED", \
+        json.dumps(finalize_calls, ensure_ascii=False)[:300]
+    assert "BK-240918-01" in json.dumps(saved_bodies[-1], ensure_ascii=False), \
+        "the booking number must persist into the saved state"
+    assert "BK-240918-01" in (r6.get("reply_text") or ""), \
+        "the patient reply must carry the booking number"
+
+
+def test_double_booking_guard_refuses_recreate(monkeypatch):
+    """Double-booking guard (2026-09-19): a create that committed but died before the
+    state save leaves the conversation at AWAIT_CONFIRMATION; the patient's re-affirm
+    mints a NEW operation_id the ledger never saw. The slot-scoped guard must refuse
+    the second booking — the existing appointment becomes the result, no re-create."""
+    import asyncio as _aio
+
+    async def _async(v):
+        return v
+
+    store: dict = {"state_data": {
+        "state_machine": {"current_state": "AWAIT_CONFIRMATION"},
+        "confirmation_state": "required",
+        "confirmation_target": {
+            "schema_version": 3, "action": "create_appointment",
+            "clinic_id": CLINIC, "patient_id": PATIENT, "conversation_id": CONVERSATION,
+            "doctor_id": DOCTOR, "doctor_name": "د. أحمد", "slot_id": SLOT,
+            "date": "2026-09-24", "time": "10:30", "appointment_type": "NEW_VISIT",
+            "patient_name": "حسام", "patient_phone": "+966500000000",
+            "operation_id": "op-old", "last_user_message_id_at_request": "evt-0",
+            "confirmation_id": "c-old", "expires_at": "2099-01-01T00:00:00Z",
+            "delivery": "pending", "source": "state_table_v3"},
+        "presented_offer": {"kind": "presented_offer", "expires_at": "2099-01-01T00:00:00Z",
+                            "clinic_id": CLINIC, "conversation_id": CONVERSATION,
+                            "alternatives": [{"rank": 1, "slot_id": SLOT,
+                                              "local_date": "2026-09-24", "local_time": "10:30"}]},
+        "booking_context": {"doctor_id": DOCTOR, "doctor_name": "د. أحمد",
+                            "appointment_type": "NEW_VISIT", "date": "2026-09-24",
+                            "time": "10:30", "slot_id": SLOT,
+                            "patient_name": "حسام", "patient_phone": "+966500000000"},
+    }}
+    saved: list = []
+
+    async def fake_save(normalized, save_body):
+        saved.append(save_body)
+        return {"initial": {"saved": True}, "retry": None}
+
+    async def fake_state(normalized):
+        return {"state_data": store["state_data"], "state_version": 7}
+
+    create_called: list = []
+
+    async def spy_create(ctx):
+        create_called.append(dict(ctx or {}))
+        return {"id": APPOINTMENT, "success": True, "response_code": "APPOINTMENT_CREATED",
+                "appointment_id": APPOINTMENT, "booking_number": "BK-DOUBLE-00",
+                "public_id": "BK-DOUBLE-00"}
+
+    finalize: list = []
+
+    monkeypatch.setattr(repo, "verify_k2_inbound_signature", lambda ctx: _async({"accepted": True}))
+    monkeypatch.setattr(repo, "log_incoming_message", lambda n: _async({"id": "in", "duplicate": False}))
+    monkeypatch.setattr(repo, "get_clinic_context", lambda n: _async({
+        "clinic_id": CLINIC, "clinic_name": "عيادة النور", "clinic_timezone": "Asia/Riyadh",
+        "clinic_found": True, "ownership_valid": True, "conversation_patient_id": PATIENT,
+        "doctor_count": 1, "clinic_phone": "+966500000000", "single_doctor_id": DOCTOR,
+        "doctor_directory": [{"id": DOCTOR, "doctor_name": "د. أحمد"}]}))
+    monkeypatch.setattr(repo, "k2_inbound_burst_rate_gate", lambda ctx: _async({"allowed": True}))
+    monkeypatch.setattr(repo, "log_k2_rate_decision", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "mark_k2_burst_message_deferred", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "get_conversation_state", fake_state)
+    monkeypatch.setattr(repo, "get_recent_window_2h", lambda ctx: _async({"conversation_history": []}))
+    monkeypatch.setattr(repo, "get_active_handoff_request", lambda n: _async({}))
+    monkeypatch.setattr(repo, "resolve_branch_inquiry", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "resolve_doctor_inquiry", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "resolve_service_fact", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "resolve_booking_ids", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "lookup_business_time_context", lambda ctx: _async({
+        "timezone": "Asia/Riyadh", "timezone_configured": True,
+        "business_hours": [{"day_of_week": 4, "open_time": "09:00", "close_time": "18:00"}],
+        "slot_found": True,
+        "start_time": "2026-09-24T10:30:00Z", "end_time": "2026-09-24T11:00:00Z"}))
+    monkeypatch.setattr(repo, "persist_pending_confirmation", lambda ctx: _async({}))
+    monkeypatch.setattr(repo, "read_fresh_offer_midturn", lambda ctx: _async(
+        {"presented_offer": store["state_data"].get("presented_offer")}))
+    monkeypatch.setattr(repo, "log_agent_audit_entry", lambda e: _async({}))
+    monkeypatch.setattr(repo, "insert_ai_request_usage", lambda u: _async("x"))
+    monkeypatch.setattr(repo, "log_outgoing_message", lambda p: _async({"id": "out"}))
+    monkeypatch.setattr(repo, "get_outgoing_reply", lambda n: _async(None))
+    monkeypatch.setattr(repo, "save_conversation_state_with_retry", fake_save)
+    monkeypatch.setattr(repo, "claim_operation", lambda ctx: _async({
+        "operation_id": "op-new", "decision": "OWNER", "child_execution_allowed": True}))
+    # THE GUARD: the slot is already booked for this patient.
+    monkeypatch.setattr(repo, "find_active_appointment_for_slot", lambda ctx: _async(
+        {"id": "123e4567-e89b-42d3-a456-426614174006", "public_id": "BK-240918-99",
+         "booking_number": "BK-240918-99"}))
+    monkeypatch.setattr(repo, "execute_approved_create_appointment", spy_create)
+    monkeypatch.setattr(repo, "finalize_operation",
+                        lambda c: finalize.append(dict(c)) or _async({"operation_id": c.get("finalize_operation_id")}))
+    affirm_contract = _contract(
+        "أيوه صح ✅", "confirmation",
+        {"patient_name": "حسام", "appointment_type": "NEW_VISIT",
+         "date": "2026-09-24", "time": "10:30"},
+        proposal={"type": "create_appointment", "requested": True},
+        relation="answer", confirm="affirmative",
+        selection={"kind": "presented_match", "rank": 1})
+    monkeypatch.setattr(runner_mod.dialogue, "call_primary_model_with_tool",
+                        lambda um, context: _async(affirm_contract))
+    monkeypatch.setattr(runner_mod.dialogue, "call_repair_model", lambda p: _async(SMALL_CONTRACT))
+    monkeypatch.setattr(runner_mod.dialogue, "compose_patient_reply", _reply_of("أهلاً بيك 🌸"))
+
+    def _payload(text, event_id):
+        return {"clinic_id": CLINIC, "patient_id": PATIENT, "conversation_id": CONVERSATION,
+                "message_text": text, "channel_type": "whatsapp", "channel_id": "201000000000",
+                "wamid": event_id, "source_event_id": event_id,
+                "time_context": {"source": "runtime_now", "now_iso": "2026-09-18T12:00:00Z",
+                                 "now_local_date": "2026-09-18", "schema_version": 2}}
+
+    r = _aio.run(_run(_payload("أيوه أكد", "evt-g"), {}))
+    assert create_called == [], "the second booking must never run"
+    assert finalize and finalize[-1].get("finalize_status") == "COMPLETED"
+    assert "BK-240918-99" in (r.get("reply_text") or ""), \
+        "the patient must be told the existing booking number, got " + str(r.get("reply_text"))[:200]

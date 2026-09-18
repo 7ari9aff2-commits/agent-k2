@@ -1159,6 +1159,38 @@ def _decide_state_table(inp, now_ts=None):
                 or (cls == 'confirmation_affirm' and _dig(contract, 'operation_proposal', 'requested') is True
                     and cs != STATES['AWAIT_CONFIRMATION'])):  # P42: bind from any of ASK_DATE/AWAIT_SLOT_CHOICE/AWAIT_CONFIRMATION — interleaved turns legally move cs off AWAIT_SLOT_CHOICE while the offer stays open
             alt = match_offered_alternative(offer, contract)
+            if _truthy(alt) and uuid_valid(_dict(alt).get('slot_id')) \
+                    and _truthy(prior_target) and prior_target.get('action') == 'create_appointment' \
+                    and target_binding_valid(prior_target, state, clinic, now_ts) \
+                    and str(_js_or(_dict(prior_target).get('slot_id'), '')) == str(_dict(alt).get('slot_id')) \
+                    and cs == STATES['AWAIT_CONFIRMATION'] \
+                    and str(_js_or(_dict(contract.get('confirmation')).get('intent'), 'none')) in ('affirmative', 'negative'):
+                # P42c (journey root-cause 2026-09-19): the affirm/negative turn on the
+                # already-bound slot belongs to the C1 confirm-execute row. The classifier
+                # ranks selection_presented above confirmation_affirm, so an affirm that
+                # echoes the offered list landed here and re-bound CONFIRMATION_REQUIRED
+                # forever (journey T6). Execute / reject the bound target instead of
+                # re-binding it — same gates as the C1 row.
+                conf_intent_echo = str(_js_or(_dict(contract.get('confirmation')).get('intent'), 'none'))
+                if conf_intent_echo == 'affirmative':
+                    fields = patient_fields_from(state, contract)
+                    complete = patient_data_complete(
+                        fields, _js_or(prior_target.get('appointment_type'), bc0.get('appointment_type')))
+                    if not complete:
+                        missing = missing_patient_fields(state, contract)
+                        veto_reasons.append('patient_data_gate_failed')
+                        return finish('confirm_blocked_missing_data', cs, 'MISSING_REQUIRED_FIELDS',
+                                      {'missing_fields': missing})
+                    patches['confirmation_target'] = {**prior_target, 'delivery': 'confirmed'}
+                    return finish('c1_confirm_execute', STATES['EXECUTING'], 'EXECUTE_APPROVED',
+                                  {'allowed': True, 'action': 'create_appointment',
+                                   'confirmation_state': 'confirmed',
+                                   'patient_data_complete': complete,
+                                   'patient_data_gate_satisfied': complete})
+                patches['confirmation_target'] = None
+                patches['progress_this_turn'] = True
+                patches['turn_directive'] = directive_for('present_alternatives', {'lockedFields': locked_fields_of(state, contract)})
+                return finish('confirm_rejected_offer_open', STATES['AWAIT_SLOT_CHOICE'], 'AVAILABILITY_RESULTS', {})
             if _truthy(alt) and uuid_valid(_dict(alt).get('slot_id')):
                 target = build_create_target(inp, alt, 'offered_alternative', now_ts)
                 if target_binding_valid(target, state, clinic, now_ts):

@@ -792,6 +792,33 @@ async def finalize_operation(ctx: dict) -> dict:
     return dict(row) if row else {}
 
 
+async def find_active_appointment_for_slot(ctx: dict) -> dict:
+    """Port-added double-booking guard (2026-09-19, QUERY_FIND_ACTIVE_APPOINTMENT_FOR_SLOT).
+
+    A create that committed but whose process died before the state save leaves the
+    conversation at AWAIT_CONFIRMATION; the patient's re-affirm mints a NEW
+    operation_id the claim ledger never saw, so the ledger alone cannot refuse the
+    second booking. Returns the existing active ('scheduled', not deleted) appointment
+    for this patient on this slot, or {} when the slot is free.
+    """
+    item = ctx if isinstance(ctx, dict) else {}
+    slot_id = _text(_js_or(item.get("slot_id"), ""))
+    if not slot_id:
+        return {}
+    from app.db.pool import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await _fetchrow(
+            conn,
+            queries.QUERY_FIND_ACTIVE_APPOINTMENT_FOR_SLOT,
+            _uuid(_js_str(_js_or(item.get("clinic_id"), ""))),
+            _uuid(_js_str(_js_or(item.get("patient_id"), ""))),
+            slot_id,
+        )
+    return dict(row) if row else {}
+
+
 async def execute_approved_create_appointment(ctx: dict) -> dict:
     """Source node: Execute Approved Create Appointment (extracted/sql/Execute_Approved_Create_Appointment.json).
 

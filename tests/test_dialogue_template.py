@@ -83,3 +83,29 @@ def test_offered_maps_rank_date_time_only():
     st = {"pending_offer": {"alternatives": [{"rank": 2, "slot_id": "s", "local_date": "2026-09-20", "local_time": "17:30", "extra": 1}]}}
     msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "x"}, {}, st, None)
     assert '{"rank": 2, "date": "2026-09-20", "time": "17:30"}' in msg and "slot_id" not in msg.split('"offered":')[1].split("]")[0]
+
+
+def test_offered_suppressed_while_confirmation_pending():
+    """P42c payload guard (2026-09-19): with a pending booking confirmation the offered
+    list must NOT reach the model — prompt precedence puts "offered + accepts →
+    selection" above "pending confirmation", which reclassified the affirm turn as a
+    slot pick and re-bound CONFIRMATION_REQUIRED forever (journey T6)."""
+    import json
+
+    st = {"confirmation_target": {"action": "create_appointment", "date": "2026-09-24"},
+          "confirmation_state": "required",
+          "pending_offer": {"alternatives": [{"rank": 1, "local_date": "2026-09-24", "local_time": "10:30"}]}}
+    msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "أيوه أكد"}, {}, st, None)
+    payload = json.loads(msg)
+    assert payload["situation"]["offered"] == []
+    assert payload["situation"]["pending_confirmation"] is not None
+
+
+def test_offered_present_without_pending_confirmation():
+    import json
+
+    st = {"pending_offer": {"alternatives": [{"rank": 1, "local_date": "2026-09-24", "local_time": "10:30"}]}}
+    msg = build_user_message(clinic_ctx(), time_ctx(), {"message_text": "الخميس"}, {}, st, None)
+    payload = json.loads(msg)
+    assert len(payload["situation"]["offered"]) == 1
+    assert payload["situation"]["pending_confirmation"] is None
