@@ -1102,7 +1102,14 @@ def _decide_state_table(inp, now_ts=None):
     # P47 TOOL-PATH BINDING BRIDGE (owner directive: no field may ever drop).
     # A live presented_offer (written by the availability tool) plus a selection in
     # the contract binds immediately, regardless of the current state row.
-    if _truthy(offer) and cls == 'selection_presented':
+    # Binding is keyed on the CONTRACT's selection, not the message class: a patient
+    # confirming ('أيوه حجز' → booking_continuation) with a selection against a live
+    # offer is a slot pick, whatever the classifier called the turn.
+    binding_class = (
+        cls == 'selection_presented'
+        or _js_string(_dig(contract, 'selection', 'kind')) in ('presented_match', 'presented_rank')
+    )
+    if _truthy(offer) and binding_class:
         bridge_alt = match_offered_alternative(offer, contract)
         if _truthy(bridge_alt) and uuid_valid(_dict(bridge_alt).get('slot_id')) \
                 and (not _truthy(prior_target)
@@ -1146,8 +1153,11 @@ def _decide_state_table(inp, now_ts=None):
         # Journey finding (2026-09-18): the patient confirming their data with an
         # affirmative + a requested create proposal IS the slot pick — the offer is
         # live and the confirm turn references it ('أيوه صح' to 'أأكد الخميس 10:30؟').
-        if _truthy(offer) and (cls == 'selection_presented'
-                or (cls == 'confirmation_affirm' and _dig(contract, 'operation_proposal', 'requested') is True)):  # P42: bind from any of ASK_DATE/AWAIT_SLOT_CHOICE/AWAIT_CONFIRMATION — interleaved turns legally move cs off AWAIT_SLOT_CHOICE while the offer stays open
+        # At AWAIT_CONFIRMATION the C1 confirm-execute row above owns the affirmative:
+        # binding again here would loop CONFIRMATION_REQUIRED forever (journey T6).
+        if _truthy(offer) and (binding_class
+                or (cls == 'confirmation_affirm' and _dig(contract, 'operation_proposal', 'requested') is True
+                    and cs != STATES['AWAIT_CONFIRMATION'])):  # P42: bind from any of ASK_DATE/AWAIT_SLOT_CHOICE/AWAIT_CONFIRMATION — interleaved turns legally move cs off AWAIT_SLOT_CHOICE while the offer stays open
             alt = match_offered_alternative(offer, contract)
             if _truthy(alt) and uuid_valid(_dict(alt).get('slot_id')):
                 target = build_create_target(inp, alt, 'offered_alternative', now_ts)

@@ -103,7 +103,13 @@ def test_full_booking_journey(monkeypatch):
     monkeypatch.setattr(repo, "resolve_booking_ids", lambda ctx: _async({}))
     monkeypatch.setattr(repo, "lookup_business_time_context", lambda ctx: _async({}))
     monkeypatch.setattr(repo, "persist_pending_confirmation", lambda ctx: _async({}))
-    monkeypatch.setattr(repo, "read_fresh_offer_midturn", lambda ctx: _async({}))
+    async def fake_fresh_offer(ctx):
+        # Production parity: the availability tool persists a presented_offer mid-turn,
+        # and Read Fresh Offer (Midturn) returns it so the state save preserves it.
+        offer = STATE_STORE.get("state_data", {}).get("presented_offer")
+        return {"presented_offer": offer} if offer else {}
+
+    monkeypatch.setattr(repo, "read_fresh_offer_midturn", fake_fresh_offer)
     monkeypatch.setattr(repo, "log_agent_audit_entry", lambda e: _async({}))
     monkeypatch.setattr(repo, "insert_ai_request_usage", lambda u: _async("x"))
     monkeypatch.setattr(repo, "log_outgoing_message", lambda p: _async({"id": "out"}))
@@ -231,18 +237,16 @@ def test_full_booking_journey(monkeypatch):
     assert (bound.get("confirmation_target") or {}).get("slot_id") == SLOT,         json.dumps(bound.get("confirmation_target"), ensure_ascii=False)[:200]
 
     # ── T6: the patient affirms the booking → executor → identity persists ──
-    # KNOWN GAP (documented): the last link — guard/claim passthrough on the bound
-    # target — is still being wired; the conditional asserts below hold the moment
-    # the executor receives the bound target.
+    # With the P42 affirmative arm + the live-offer stub this now executes end to end.
     r6 = asyncio.run(_run(payload("أيوه أكد", "evt-6"), {}))
-    assert r6.get("reply_text"), "the affirm turn must still deliver a reply"
-    # KNOWN GAP (precisely located): the affirm turn at AWAIT_CONFIRMATION re-emits
-    # CONFIRMATION_REQUIRED instead of c1_confirm_execute → the executor never runs.
-    # Next milestone: analyze the state-table rows between AWAIT_CONFIRMATION and the
-    # C1 gate (orchestrator ~1088+) with fresh context, add the missing arm, then
-    # restore these strict asserts:
-    # sd = exec_calls.get("system_decision") or {}
-    # assert (sd.get("confirmation_target") or {}).get("slot_id") == SLOT
-    # assert finalize_calls and finalize_calls[-1].get("finalize_status") == "COMPLETED"
-    # assert "BK-240918-01" in json.dumps(saved_bodies[-1], ensure_ascii=False)
-    # assert "BK-240918-01" in (r6.get("reply_text") or "")
+    sd = exec_calls.get("system_decision") or {}
+    assert (sd.get("confirmation_target") or {}).get("slot_id") == SLOT,         f"executor must receive the bound target: {exec_calls}"
+    assert exec_calls.get("slot_id") == SLOT, exec_calls
+    assert exec_calls.get("patient_phone") == "+966500000000", exec_calls
+    assert finalize_calls, "finalize must run"
+    fc = finalize_calls[-1]
+    assert fc.get("finalize_status") == "COMPLETED", fc
+    assert fc.get("finalize_mutation_status") == "EXECUTED", fc
+    assert fc.get("finalize_clinic_id") == CLINIC, fc
+    assert "BK-240918-01" in json.dumps(saved_bodies[-1], ensure_ascii=False)
+    assert "BK-240918-01" in (r6.get("reply_text") or "")
