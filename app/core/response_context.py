@@ -381,6 +381,68 @@ def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, A
     return errors
 
 
+def try_ground_primary_reply(draft: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Ground the dialogue agent's OWN reply through the same value rules the composer
+    is held to. Returns a composer-shaped result when the draft is clean — saving the
+    composer LLM call entirely — or None when the composer must author the reply.
+
+    Cost model (2026-09-18): the agent draft is model-authored text that already saw
+    the same facts; validating it is free, composing costs a full LLM round trip.
+    A draft passes only when every date/clock token it states traces to a fact value
+    it honestly cites, and — on completed mutations — the booking number surfaces.
+    Any failure routes to the composer unchanged, so the safety floor never drops.
+    """
+    draft = str(draft or "").strip()
+    if not draft:
+        return None
+    facts = [f for f in (context.get("facts") or []) if isinstance(f, dict)]
+    facts_by_id = {f.get("id"): f.get("value") for f in facts}
+    folded = _fold_digits(draft)
+    cited: List[str] = []
+    allowed: set = set()
+    for fid, value in facts_by_id.items():
+        if value is None:
+            continue
+        vals = set()
+        _collect_fact_values(value, out=vals)
+        # A fact is citable when any of its leaf values appears verbatim in the draft.
+        if any(v and len(v) >= 2 and v in folded for v in vals):
+            cited.append(fid)
+            allowed |= vals
+    if not cited:
+        # Pure conversational reply: no fact values echoed. Cite the patient's own
+        # message — the same evidence the composer contract accepts for small talk.
+        cited = ["patient.current_message"] if "patient.current_message" in (context.get("fact_ids") or []) else []
+    # On TOOL turns, politeness alone is not enough: a draft that cites nothing but
+    # the patient's own message ignored the data the tools returned (reviewer case:
+    # the patient asked for the address and got a bare greeting). Require at least
+    # one non-patient citation so the reply demonstrably used the tool's answer.
+    if any(str(fid).startswith("tool.") for fid in (context.get("fact_ids") or [])) \
+            and cited == ["patient.current_message"]:
+        return None
+    if not cited:
+        return None
+    errors = _value_grounding_errors(
+        draft, cited,
+        {**context, "facts": [{"id": fid, "value": facts_by_id.get(fid)} for fid in cited]})
+    code = str(context.get("response_code") or "")
+    if code in {"APPOINTMENT_CREATED", "RESCHEDULE_COMPLETED", "CANCEL_COMPLETED", "IDEMPOTENT_REPLAY"}:
+        numbers: set = set()
+        for fid in cited:
+            _collect_fact_values(facts_by_id.get(fid), key="booking_number", out=numbers)
+        for number in numbers:
+            if number and _fold_digits(number) not in folded:
+                errors.append(f"reply_missing_booking_number:{number}")
+    if errors:
+        return None
+    return {
+        "reply": draft, "evidence_ids": cited, "missing_information": [],
+        "unsupported_claims": [], "grounding_status": "supported",
+        "origin": "primary_grounded", "raw_output": draft, "usage": {},
+        "composer_skipped": True,
+    }
+
+
 def validate_composer_output(raw: Any, context: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """Validate the composer's structured contract without inspecting prose via regex."""
     errors: List[str] = []

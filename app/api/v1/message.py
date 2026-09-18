@@ -710,9 +710,28 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         guard=guard,
     )
 
+    # ── Cost gate: ground the PRIMARY model's own draft first ──────────────────
+    # The dialogue agent already saw the same facts; validating its reply is free,
+    # while the composer costs a full LLM round trip. When the draft passes the same
+    # evidence contract the composer is held to, it ships directly and the composer
+    # call is skipped (most conversational turns). Any failure falls through to the
+    # composer unchanged — the safety floor never drops.
+    primary_grounded = None
+    primary_reply = str(
+        (policy or {}).get("agent_reply")
+        or (normalized_agent_output or {}).get("agent_reply")
+        or "").strip()
+    if primary_reply:
+        primary_grounded = response_context.try_ground_primary_reply(primary_reply, reply_context)
+
     composer_result: Dict[str, Any] = {}
     composer_error: Optional[str] = None
-    if getattr(settings, "LLM_COMPOSER_ENABLED", True):
+    composer_skipped = False
+    composer_ms = 0
+    if primary_grounded is not None:
+        composer_result = primary_grounded
+        composer_skipped = True
+    elif getattr(settings, "LLM_COMPOSER_ENABLED", True):
         _composer_started = time.time()
         try:
             composer_result = await dialogue.compose_patient_reply(reply_context)
@@ -747,7 +766,8 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "canonical_reply": rendered_reply,
         "render_error": composer_error,
         "render_used": True,
-        "reply_origin": "model_composer" if composer_result else "safe_fallback",
+        "reply_origin": ("primary_grounded" if composer_skipped
+                         else ("model_composer" if composer_result else "safe_fallback")),
         "composer_evidence_ids": (composer_result or {}).get("evidence_ids") or [],
         "composer_missing_information": (composer_result or {}).get("missing_information") or [],
     }
@@ -797,6 +817,7 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     audit_entry["tool_call_count"] = len(tool_events or [])
     audit_entry["reply_composer"] = {
         "origin": extracted.get("reply_origin"),
+        "composer_skipped": composer_skipped,
         "evidence_ids": extracted.get("composer_evidence_ids") or [],
         "missing_information": extracted.get("composer_missing_information") or [],
         "error": composer_error,
