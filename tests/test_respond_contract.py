@@ -7,14 +7,15 @@ POLICY_OUT = {"response_code": "APPOINTMENT_CREATED",
                           "appointment_id": "a-9", "escalate": None, "proposed_action": "create_appointment"}}
 
 
-def test_save_transport_failure_message_wins():
+def test_save_transport_failure_does_not_overwrite_the_reply():
     out = build_final_response(NORMALIZED, "m-1", {"error": "boom"}, None, None, "رد", POLICY_OUT, "t")
-    assert out["reply_text"] == "تعذر حفظ حالة المحادثة حاول مرة أخرى"
+    assert out["reply_text"] == "رد"
+    assert out.get("suppress_reply") is not True
 
 
 def test_save_http_status_counts_as_transport_error():
     out = build_final_response(NORMALIZED, "m-1", {"statusCode": 500}, None, None, "رد", POLICY_OUT, "t")
-    assert out["reply_text"].startswith("تعذر حفظ")
+    assert out["reply_text"] == "رد"
 
 
 def test_stale_save_rejected_is_not_failure_when_retry_did_not_run():
@@ -25,7 +26,7 @@ def test_stale_save_rejected_is_not_failure_when_retry_did_not_run():
 
 def test_saved_false_without_retry_is_failure():
     out = build_final_response(NORMALIZED, "m-1", {"saved": False}, None, None, "الرد المرسل", POLICY_OUT, "t")
-    assert out["reply_text"].startswith("تعذر حفظ")
+    assert out["reply_text"] == "الرد المرسل"
 
 
 def test_model_reply_outranks_legacy_guard_override():

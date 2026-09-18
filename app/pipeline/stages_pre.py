@@ -2779,7 +2779,6 @@ def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[st
 # ---------------------------------------------------------------------------
 
 _OUTGOING_MODEL_FALLBACK = "deepseek/deepseek-v3.2"
-_SAVE_FAILED_REPLY = "تعذر حفظ حالة المحادثة حاول مرة أخرى"
 
 
 def _sum_usage_tokens(rows: Any) -> float:
@@ -2848,7 +2847,11 @@ def build_outgoing_message_sql_parameters(item: Dict[str, Any], inputs: Dict[str
         _prop(extracted, "rendered_reply") if _prop(extracted, "render_used") is True
         else _first_truthy(_prop(extracted, "agent_reply"), _prop(extracted, "final_reply"), _prop(extracted, "canonical_reply"), _prop(extracted, "rendered_reply"), "")
     )
-    reply = _SAVE_FAILED_REPLY if save_failed else _js_string(_first_truthy(extracted_reply, ""))
+    # Reviewer/user directive (2026-09-18): the outgoing row must carry the REAL
+    # model-authored reply even when the state save failed — logging a canned
+    # infrastructure notice as the reply both reads robotic and poisoned the
+    # dedupe gate (a retry then returned the notice instead of re-running).
+    reply = _js_string(_first_truthy(extracted_reply, ""))
     response_policy = _dict_or(inputs.get("response_policy_deterministic"))
     agent1_tokens = _sum_usage_tokens(inputs.get("deepseek_model"))
     agent2_tokens = _sum_usage_tokens(inputs.get("deepseek_result_model"))

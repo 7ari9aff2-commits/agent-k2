@@ -59,10 +59,11 @@ def build_final_response(
             and initial.get("rejected_reason") != "CONCURRENT_STATE_STALE")
     )
     if failed:
-        # Infrastructure failure: the state could not be persisted, so the turn must not
-        # look successful. This is a notice, not a reply, and it is the only static
-        # patient-facing string besides _MODEL_UNAVAILABLE_REPLY.
-        reply_text = _SAVE_FAILED_REPLY
+        # Reviewer/user directive (2026-09-18, no-static-replies): a state-save failure
+        # must NOT overwrite the model-authored reply — the patient still gets their
+        # answer, the save failure travels in metadata, and when NOTHING was authored
+        # the turn suppresses (reply_text None) so the retry re-runs it.
+        reply_text = rendered_reply or None
     else:
         guard = reply_guard_result or {}
         override = ((guard.get("_reply_guard") or {}).get("override")) if isinstance(guard.get("_reply_guard"), dict) else None
@@ -77,6 +78,7 @@ def build_final_response(
     deterministic_override = bool(not failed and not rendered_reply and override)
     return {
         "reply_text": reply_text,
+        "suppress_reply": bool(failed and not reply_text),
         "conversation_id": (normalized or {}).get("conversation_id"),
         "clinic_id": (normalized or {}).get("clinic_id"),
         "outgoing_message_id": outgoing_message_id or None,

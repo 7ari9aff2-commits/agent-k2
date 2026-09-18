@@ -223,7 +223,8 @@ async def test_rpc_get_available_slots_guards_invalid_inputs():
 
 
 def test_respond_stale_save_retry_failure():
-    """BUG-8: If retry ran and saved is False or None, reply_text must indicate state save failure."""
+    """2026-09-18 contract: a state-save failure NEVER overwrites the model-authored
+    reply — the patient still receives it (the failed save travels in metadata)."""
     normalized = {"conversation_id": CONVERSATION, "clinic_id": CLINIC}
     policy_out = {"response_code": "CONVERSATION_ONLY", "output": {}}
 
@@ -238,7 +239,7 @@ def test_respond_stale_save_retry_failure():
         response_policy_output=policy_out,
         processed_at_iso="2026-09-17T12:00:00Z",
     )
-    assert res1["reply_text"] == "تعذر حفظ حالة المحادثة حاول مرة أخرى"
+    assert res1["reply_text"] == "أهلا بك"
 
     # Case 2: Retry ran and saved key is None or missing
     res2 = build_final_response(
@@ -251,7 +252,7 @@ def test_respond_stale_save_retry_failure():
         response_policy_output=policy_out,
         processed_at_iso="2026-09-17T12:00:00Z",
     )
-    assert res2["reply_text"] == "تعذر حفظ حالة المحادثة حاول مرة أخرى"
+    assert res2["reply_text"] == "أهلا بك"
 
     # Case 3: Retry ran and saved is True -> normal reply
     res3 = build_final_response(
@@ -268,9 +269,9 @@ def test_respond_stale_save_retry_failure():
 
 
 def test_outgoing_params_stale_retry_failure_mirrors_patient_reply():
-    """BUG-8 sibling: the DB-logged outgoing reply must match the patient-facing reply.
-    When the retry ran but `saved` is missing/not True, the logged reply must be the
-    save-failure message — not the rendered reply the patient never saw."""
+    """2026-09-18 contract: the DB-logged outgoing reply must match the patient-facing
+    reply even when the state save failed — a canned infrastructure notice must never
+    be logged as the reply (it poisoned the dedupe gate on retries)."""
     from app.pipeline.stages_pre import build_outgoing_message_sql_parameters
 
     params = build_outgoing_message_sql_parameters({}, {
@@ -281,7 +282,7 @@ def test_outgoing_params_stale_retry_failure_mirrors_patient_reply():
         "response_policy_deterministic": {"response_code": "CONVERSATION_ONLY", "output": {}},
     })
     qp = params["query_params"]
-    assert "تعذر حفظ حالة المحادثة" in str(qp), f"expected save-failure reply in query_params, got {qp}"
+    assert "أهلا بك" in str(qp), f"the real reply must be logged even on save failure, got {qp}"
 
     # Retry succeeded -> the real rendered reply is logged
     params_ok = build_outgoing_message_sql_parameters({}, {

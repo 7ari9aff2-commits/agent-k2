@@ -44,7 +44,6 @@ class K2JSONResponse(JSONResponse):
 # The only static patient-facing string in the pipeline. It is not a reply: it is an
 # infrastructure-failure notice, used only when every model-authored candidate is empty
 # (all LLM calls failed). It deliberately makes no claim about the patient's request.
-_MODEL_UNAVAILABLE_REPLY = "معلش، حصلت مشكلة تقنية عندنا دلوقتي. ممكن تبعت رسالتك تاني؟"
 
 
 class _Exit(Exception):
@@ -121,6 +120,25 @@ def _lock_key_of(body: Dict[str, Any]) -> str:
         if value is not None and str(value).strip():
             return str(value).strip().lower()
     return ""
+
+
+
+async def _dispatch_failure_handoff(normalized: Dict[str, Any], reason_code: str, note: str) -> None:
+    """Owner directive (no static replies): when nothing model-authored exists for a
+    turn, the reply suppresses and a HIGH-priority handoff dispatches so a human
+    follows up. Contained — a handoff failure never breaks the turn."""
+    try:
+        await handoff_service.create_or_reuse_handoff(handoff_service.HandoffChildInput(
+            clinic_id=(normalized or {}).get("clinic_id"),
+            conversation_id=(normalized or {}).get("conversation_id"),
+            patient_id=(normalized or {}).get("patient_id"),
+            channel_type=(normalized or {}).get("channel_type"),
+            channel_id=(normalized or {}).get("channel_id"),
+            handoff_reason=note, reason_code=reason_code, priority="high",
+            source_message_id=(normalized or {}).get("source_event_id"),
+            context_snapshot={"message_text": (normalized or {}).get("message_text")}))
+    except Exception:
+        logger.exception("failure handoff dispatch failed — staff visibility lost for this turn")
 
 
 @router.post("/message")
@@ -351,20 +369,25 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             if (replay_composer or {}).get("usage") else [],
         })
         outgoing_row = await repository.log_outgoing_message(outgoing_params)
-        return build_final_response(
+        # No-static directive: when the composer authored nothing for the replay, the
+        # turn suppresses and dispatches a handoff — the deterministic-with-number
+        # text is ledger/audit metadata, not a patient reply.
+        if not replay_reply:
+            await _dispatch_failure_handoff(normalized, "REPLAY_UNANSWERED",
+                                            "إعادة تشغيل رسالة مكررة بدون رد — متابعة مطلوبة")
+        response = build_final_response(
             normalized,
             (outgoing_row or {}).get("id"),
             {"saved": True},
             {"saved": True},
             replay_guard,
-            # Reviewer-verified: policy["output"] does not exist — the old dead read
-            # yielded reply_text=None and an empty outgoing row that then poisoned
-            # has_outgoing_reply forever. The deterministic replay reply (with the
-            # booking number) lives on the replay evaluation itself.
-            replay_reply or (replay_eval.get("system_decision") or {}).get("final_reply"),
+            replay_reply or None,
             policy,
-            _now_iso(),
-        )
+            _now_iso(),)
+        if not replay_reply:
+            response["reply_text"] = None
+            response["suppress_reply"] = True
+        return response
 
     # ── L21-23 Deterministic resolvers ─────────────────────────────────────────
     branch_fact = await repository.resolve_branch_inquiry({"normalized": normalized, "clinic_context": clinic_context})
@@ -742,20 +765,18 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
 
     rendered_reply = str((composer_result or {}).get("reply") or "").strip()
     if not rendered_reply:
-        # Model-first, always. Every model-authored candidate is tried before the single
-        # infrastructure notice below. No response-code template is consulted: a rigid
-        # prewritten sentence must never stand in for the agent's own words. EXCEPTION
-        # (reviewer-verified 2026-09-18): when the composer rejected a fabrication and
-        # the turn carries a DETERMINISTIC final_reply (claim/replay decisions — the
-        # fact-safe text with the booking number), it outranks the primary model's
-        # ungrounded draft, which is exactly the text grounding refused to ship.
+        # Model-first, always. Every model-authored candidate is tried; a prewritten
+        # sentence must never stand in for the agent's own words. Deterministic status
+        # notices (claim-blocked final_reply) are metadata for the ledger/audit — they
+        # do NOT reach the patient as replies (owner directive: no static text ever).
+        # When nothing model-authored exists, the turn SUPPRESSES and dispatches a
+        # handoff — a human follows up instead of a canned line.
         rendered_reply = str(
-            (decision or {}).get("final_reply")
-            or policy.get("agent_reply")
+            policy.get("agent_reply")
             or normalized_agent_output.get("agent_reply")
             or repaired_result.get("agent_reply")
             or base_extracted.get("agent_reply")
-            or _MODEL_UNAVAILABLE_REPLY
+            or ""
         ).strip()
 
     extracted = {
@@ -874,7 +895,7 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     outgoing_row = await repository.log_outgoing_message(outgoing_params)
 
     # ── L80 Respond To Patient ─────────────────────────────────────────────────
-    return build_final_response(
+    response = build_final_response(
         normalized=normalized,
         outgoing_message_id=(outgoing_row or {}).get("id"),
         save_initial=(save_result or {}).get("initial") or {},
@@ -884,3 +905,13 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         response_policy_output=policy,
         processed_at_iso=_now_iso(),
     )
+    if not rendered_reply:
+        # Owner directive (no static replies, ever): nothing model-authored exists for
+        # this turn — suppress the reply and dispatch a HIGH-priority handoff so a
+        # human follows up. The patient is never fed a canned line.
+        response["reply_text"] = None
+        response["suppress_reply"] = True
+        response["response_code"] = response.get("response_code") or "MODEL_UNAVAILABLE"
+        await _dispatch_failure_handoff(normalized, "MODEL_UNAVAILABLE",
+                                        "النموذج لم يكتب ردًا لهذا الدور — تدخل بشري مطلوب")
+    return response
