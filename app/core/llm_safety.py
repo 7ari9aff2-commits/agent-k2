@@ -591,9 +591,11 @@ def _extract_json_document(text: Any) -> Optional[Dict[str, Any]]:
     if text is None or text is _UNDEFINED:
         return None
     t = _js_string(text).strip()
-    fenced = _FENCED_BLOCK_RE.search(t)
-    if fenced:
-        t = fenced.group(1).strip()
+    fenced_blocks = _FENCED_BLOCK_RE.findall(t)
+    if fenced_blocks:
+        # Reviewer fix: first-fence-wins inverted the last-object-wins contract when
+        # the repair model emitted draft+corrected fences — the corrected block wins.
+        t = fenced_blocks[-1].strip()
 
     def parse_at(start: int) -> Optional[Tuple[Dict[str, Any], int]]:
         depth = 0
@@ -754,7 +756,9 @@ def _validate_contract(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
             phone = None
 
     visit_raw = _js_string(_first_truthy(_prop(ent, "visit_type"), _prop(ent, "appointment_type"), ""))
-    v = _WS_MULTI_RE.sub("_", visit_raw.strip().upper())
+    # Reviewer fix: "FOLLOW-UP" (hyphen) previously missed the enum and nulled
+    # the visit type mid-booking.
+    v = _WS_MULTI_RE.sub("_", visit_raw.strip().upper().replace("-", " "))
     if not v:
         visit_type: Optional[str] = None
     elif v in VISIT_TYPES:

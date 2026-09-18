@@ -765,7 +765,8 @@ def _validate_contract(raw, ctx):
             warnings.append('patient_phone_invalid')
             phone = None
     vt_raw = _js_string(_js_or(ent.get('visit_type'), ent.get('appointment_type'), '')).strip().upper()
-    v = _WS_PLUS_RE.sub('_', vt_raw)
+    # Reviewer fix: hyphenated spellings ('FOLLOW-UP') normalize like whitespace forms.
+    v = _WS_PLUS_RE.sub('_', vt_raw.replace('-', ' '))
     if not v:
         visit_type = None
     elif v in VISIT_TYPES:
@@ -887,7 +888,12 @@ def normalize_agent_output(inputs: dict) -> dict:
     rescue_conf = _js_string(_js_or(_dict(pd_confirmation).get('intent'), 'none')) if (rescue_doc_ok and _truthy(pd_confirmation) and isinstance(pd_confirmation, dict)) else 'none'
     pd_selection = parsed_doc.get('selection') if rescue_doc_ok else None
     rescue_sel = pd_selection if (rescue_doc_ok and _truthy(pd_selection) and isinstance(pd_selection, dict)) else None
-    rescue_negated = _RESCUE_NEGATED_RE.match(_js_string(_js_or(normalized_message, '')).strip()) is not None
+    _norm_msg = _js_string(_js_or(normalized_message, '')).strip()
+    # Reviewer fix: negation anywhere in the message (not only at its head) must
+    # block the slot rescue — 'بصراحة مش عايز الساعه 3' was accepted as a pick.
+    rescue_negated = (_RESCUE_NEGATED_RE.match(_norm_msg) is not None
+                      or _NEG_BEFORE_TIME_RE.search(_norm_msg) is not None
+                      or re.search(r'(?:مش|غير|بدون|لا)', _norm_msg) is not None)
     rescue_needed = (
         rescue_live and rescue_doc_ok
         and rescue_intent in ('unclear', 'booking_continuation')

@@ -255,7 +255,10 @@ def normalize_and_validate(payload: dict, headers: dict) -> dict:
     source_event_id = _clean(_pick(
         _prop(body, 'source_event_id'), _prop(body, 'sourceEventId'), _prop(body, 'wamid'),
         _prop(body, 'message_id'), _prop(body, 'messageId'), _prop(body, 'event_id'), _prop(body, 'eventId'),
-        _prop(body, 'update_id'), _prop(body, 'updateId'), _prop(body, 'id')))
+        _prop(body, 'update_id'), _prop(body, 'updateId')))
+    # Reviewer fix: bare 'id' removed from the alias chain — a flattened provider
+    # body whose only id is a constant WABA/entry id made every message share one
+    # idempotency key, silently suppressing all follow-up messages as duplicates.
     source_timestamp = _pick(
         _prop(body, 'received_at'), _prop(body, 'receivedAt'), _prop(body, 'timestamp'),
         _prop(body, 'created_at'), _prop(body, 'createdAt'), _prop(body, 'sent_at'))

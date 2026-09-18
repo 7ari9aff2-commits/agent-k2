@@ -490,7 +490,7 @@ QUERY_RESOLVE_BOOKING_IDS_DETERMINISTIC = r'''WITH input AS (
       '\s+', ' ', 'g'
     )), '') AS requested_doctor_name,
     NULLIF(trim(regexp_replace(
-      regexp_replace(lower(trim($12::text)), '(^|[[:space:]])(╪º┘ä)?(╪º╪│┘å╪º┘å|┘â╪┤┘ü|┘ü╪¡╪╡)([[:space:]]|$)', ' ', 'gi'),
+      regexp_replace(lower(trim($12::text)), '(^|[[:space:]])(ال)?(اسنان|اسنان|كشف|فحص|تنظيف|حشو|جذور|تقويم|زراعة|زراعه)([[:space:]]|$)', ' ', 'gi'),
       '\s+', ' ', 'g'
     )), '') AS requested_service_name,
     NULLIF($13::text,'') AS operation_type,
@@ -515,7 +515,7 @@ QUERY_RESOLVE_BOOKING_IDS_DETERMINISTIC = r'''WITH input AS (
 ), service_pool AS (
   SELECT s.id::text AS id, s.name,
     trim(regexp_replace(
-      regexp_replace(lower(trim(s.name)), '(^|[[:space:]])(╪º┘ä)?(╪º╪│┘å╪º┘å|┘â╪┤┘ü|┘ü╪¡╪╡)([[:space:]]|$)', ' ', 'gi'),
+      regexp_replace(lower(trim(s.name)), '(^|[[:space:]])(ال)?(اسنان|اسنان|كشف|فحص|تنظيف|حشو|جذور|تقويم|زراعة|زراعه)([[:space:]]|$)', ' ', 'gi'),
       '\s+', ' ', 'g'
     )) AS normalized_name,
     i.requested_service_id, i.requested_service_name
