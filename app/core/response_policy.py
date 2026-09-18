@@ -731,12 +731,14 @@ def build_response(ctx: dict) -> dict:
         operation_status = 'awaiting_confirmation'
         retryable = False
     # Narrow technical recovery: only override an empty, generic, or unrelated Agent 1 result.
-    elif error_followup_needs_fallback:
+    # P0 guard (reviewer-verified): an APPROVED turn whose model contract said
+    # small_talk/other must NOT be downgraded here — the mutation already committed.
+    elif error_followup_needs_fallback and not child_execution_required:
         response_code = 'BOOKING_RECOVERY_EXPLANATION'
         operation_status = 'collecting_details'
         retryable = False
     # FAQ / Doctor Service / Price / Small talk — conversation only (DeepSeek #2 generates reply)
-    elif is_non_scheduling_turn or inferred_non_scheduling_turn:
+    elif (is_non_scheduling_turn or inferred_non_scheduling_turn) and not child_execution_required:
         response_code = 'CONVERSATION_ONLY'
         operation_status = 'idle'
     # Child execution invalid

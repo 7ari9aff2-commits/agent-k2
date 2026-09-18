@@ -1210,12 +1210,12 @@ def apply_resolved_booking_ids_deterministic(item: Dict[str, Any], inputs: Dict[
                 "expected_old_slot_id": _coalesce(_prop(merged_entities, "expected_old_slot_id"), _prop(v3_entities, "expected_old_slot_id"), None),
                 "new_slot_id": (
                     None
-                    if availability_only
+                    if (availability_only or not may_carry_slot)
                     else _coalesce(_prop(merged_entities, "new_slot_id"), _prop(v3_entities, "new_slot_id"), None)
                 ),
                 "slot_id": (
                     None
-                    if availability_only
+                    if (availability_only or not may_carry_slot)
                     else _coalesce(_prop(merged_entities, "slot_id"), _prop(v3_entities, "slot_id"), None)
                 ),
                 "doctor_id": _coalesce(_prop(merged_entities, "doctor_id"), _prop(v3_entities, "doctor_id"), None),

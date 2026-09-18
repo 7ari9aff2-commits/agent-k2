@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -464,6 +465,23 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             # The repair model rewrites the whole contract; without this back-fill a
             # rewrite that drops entities erases patient data the tool calls carried.
             repair_raw = dialogue.recover_entities_from_tool_events(repair_raw, tool_events)
+            # Reviewer finding: the repair validator skips day-word absorption — a
+            # repaired 'بكرة' nulled entities.date and _keep resurrected the STALE
+            # prior date. Absorb here, exactly like the primary path does.
+            try:
+                _repair_doc = json.loads(repair_raw)
+                _repair_ent = _repair_doc.get("entities")
+                _raw_date = str((_repair_ent or {}).get("date") or "")
+                if _repair_ent is not None and _raw_date and not re.fullmatch(
+                        r"[0-9]{4}-[0-9]{2}-[0-9]{2}", _raw_date):
+                    _now_local = str((canonical_time_context or {}).get("now_local_date")
+                                     or datetime.now(timezone.utc).date().isoformat())
+                    _absorbed = agent_output._absorb_day_word_to_iso(_raw_date, _now_local)
+                    if _absorbed:
+                        _repair_ent["date"] = _absorbed
+                        repair_raw = json.dumps(_repair_doc, ensure_ascii=False)
+            except Exception:
+                pass
             repaired_result = llm_safety.validate_repaired_contract_deterministic(
                 {"text": repair_raw, "output": repair_raw},
                 {"normalize_agent_output": normalized_agent_output, "normalize_validate": normalized,
