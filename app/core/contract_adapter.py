@@ -61,12 +61,48 @@ def _json_stringify(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-_UUID_V4ISH_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
+_UUID_V4ISH_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{1,4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)  # version-agnostic: UUIDv7 ids exist
 
 _CANDIDATE_KEYS = ('output', 'text', 'agent_raw_output', 'raw', 'data')
 
 
 # ── Node 1: K2 Contract Adapter v4 to v3 ──
+
+def _extract_balanced_json_object(text: str):
+    """First balanced {...} object in the text that parses as JSON (reviewer fix)."""
+    import json as _json
+
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = _json.loads(text[start:i + 1])
+                        if isinstance(obj, dict):
+                            return obj
+                    except Exception:
+                        pass
+                    break
+        start = text.find("{", start + 1)
+    return None
+
 def contract_v4_to_v3(contract_v4: dict, extra: dict | None = None) -> dict:
     """Source node: K2 Contract Adapter v4 to v3 (extracted/code/K2_Contract_Adapter_v4_to_v3.js).
 
@@ -101,12 +137,22 @@ def contract_v4_to_v3(contract_v4: dict, extra: dict | None = None) -> dict:
             parsed.setdefault('schema_version', 'k2.dialogue.v4')
         else:
             raw_text = None
+            embedded = None
             for k in _CANDIDATE_KEYS:
                 cand = item.get(k)
                 if isinstance(cand, str) and cand.strip() and not cand.strip().startswith('{'):
-                    raw_text = cand.strip()
+                    if embedded is None:
+                        # Reviewer fix (P1): prose before the JSON used to swallow the
+                        # whole contract into `reply` — every entity and the operation
+                        # proposal were dropped. Extract the embedded object instead.
+                        embedded = _extract_balanced_json_object(cand)
+                    if raw_text is None:
+                        raw_text = cand.strip()
                     break
-            if raw_text and not _truthy(parsed):
+            if isinstance(embedded, dict) and (embedded.get('reply') or embedded.get('entities')):
+                embedded.setdefault('schema_version', 'k2.dialogue.v4')
+                parsed = embedded
+            elif raw_text and not _truthy(parsed):
                 parsed = {
                     'schema_version': 'k2.dialogue.v4',
                     'reply': raw_text,
@@ -254,8 +300,13 @@ def derive_actions(inputs: dict) -> dict:
             actions.append({'type': 'send_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
         elif decision.get('action') == 'reschedule_appointment':
             actions.append({'type': 'send_reschedule_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
-        else:
+        elif decision.get('action') == 'cancel_appointment':
             actions.append({'type': 'send_cancellation_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number, 'replayed': True})
+        else:
+            # Reviewer fix: a replay whose action is unknown/none previously fabricated
+            # a CANCELLATION confirmation — telling the patient something was cancelled
+            # that never was. Neutral reply instead.
+            actions.append({'type': 'send_conversation_reply', 'reason': 'replay_without_action'})
     elif response_code == 'CANCEL_COMPLETED':
         actions.append({'type': 'send_cancellation_confirmation', 'appointment_id': _dict(output).get('appointment_id'), 'booking_number': booking_number})
     elif response_code == 'RESCHEDULE_COMPLETED':

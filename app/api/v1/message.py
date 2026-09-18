@@ -112,11 +112,13 @@ _CONVERSATION_LOCK_WAIT_SECONDS = 90.0
 
 def _lock_key_of(body: Dict[str, Any]) -> str:
     """Mirror normalize's conversation-id chain (conversation_id|conversationId|thread_id|chat_id),
-    lowercased — uuids are case-insensitive in the DB but the lock dict is not."""
+    lowercased — uuids are case-insensitive in the DB but the lock dict is not. Values are
+    string-coerced like normalize's _js_string: a numeric thread_id used to skip the lock
+    entirely while normalize accepted it."""
     for key in ("conversation_id", "conversationId", "thread_id", "chat_id"):
         value = body.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip().lower()
+        if value is not None and str(value).strip():
+            return str(value).strip().lower()
     return ""
 
 
@@ -477,7 +479,11 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     apply_ids_result = stages_post.apply_resolved_booking_ids_deterministic(
         booking_ids_result,
         {"normalize_agent_output": normalized_agent_output, "validate_repaired_contract": repaired_result,
-         "normalize_validate": normalized, "system_orchestrator": {}},
+         "normalize_validate": normalized, "system_orchestrator": {},
+         # P-SLOT-GUARD liveness input (reviewer-verified): the guard reads the live
+         # offer/target from conversation_state — omitting it failed the guard closed
+         # and dropped a still-live offered slot.
+         "conversation_state": state_row},
         now_ms=time.time() * 1000)
     p17_result = patient_fields.normalize_patient_fields({**apply_ids_result, "normalize_validate": normalized})
     normalized_agent = p17_result
@@ -508,7 +514,7 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
     claim_input: Dict[str, Any] = {}
     if not conditions_pre.if_non_scheduling_turn_v19(decision):
         # ── L43 Execution Transition Guard (Deterministic) ─────────────────────
-        guard_result = gates.execution_transition_guard_deterministic(decision, state_data)
+        guard_result = gates.execution_transition_guard_deterministic(decision, state_row)
         decision = guard_result
 
         # ── L44-46 Business Time Context → Gate → IF Business Time Allowed ─────
@@ -559,21 +565,31 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
                     "apply_resolved_booking_ids": apply_ids_result,
                     "clinic_context": clinic_context})
                 exec_create_result = await repository.execute_approved_create_appointment({
-                    "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {})})
+                    "normalized": normalized, "claim": claim_result, "exec": exec_ctx, **(exec_ctx or {}),
+                    # Reviewer-verified: prepare_execute_input computes `notes` but its
+                    # output was discarded at the call site — $5 notes always bound "".
+                    "notes": (exec_input or {}).get("notes")})
                 exec_result = exec_create_result
             elif conditions_post.if_approved_cancel_action(decision):
+                # Wiring (fixed 2026-09-18, reviewer-verified): the executor reads
+                # system_decision/operation_id from the TOP level of its item — the old
+                # {"decision": ...} key bound appointment_id="" and operation_id=the raw
+                # idempotency key, so approved cancels never executed.
                 exec_cancel_result = await repository.execute_approved_cancel_appointment({
-                    "decision": decision, "normalized": normalized, "claim": claim_result})
+                    **(decision or {}), "normalized": normalized, "claim": claim_result,
+                    "operation_id": claim_applied.get("operation_id")})
                 exec_result = exec_cancel_result
             elif conditions_post.if_approved_reschedule_action(decision):
                 exec_reschedule_result = await repository.execute_approved_reschedule_appointment({
-                    "decision": decision, "normalized": normalized, "claim": claim_result})
+                    **(decision or {}), "normalized": normalized, "claim": claim_result,
+                    "operation_id": claim_applied.get("operation_id")})
                 exec_result = exec_reschedule_result
-        except Exception:
-            # A raise here may mean the mutation committed and the transport died — the
-            # outcome is UNKNOWN, not provably failed. INCONCLUSIVE keeps the ledger's
-            # honest escalate path; FAILED_FINAL would harden "don't know" into
-            # "already processed, never again" for the patient.
+        except BaseException:
+            # BaseException (not Exception): asyncio.CancelledError from a deploy or a
+            # client disconnect during the executor RPC must STILL close the claim —
+            # otherwise the ledger stays IN_PROGRESS and every retry is told
+            # "قيد التنفيذ" forever. The outcome is UNKNOWN here (the RPC may have
+            # committed), so INCONCLUSIVE — never FAILED_FINAL.
             if claim_applied.get("operation_id"):
                 try:
                     await repository.finalize_operation({
@@ -727,7 +743,11 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
     if conditions_pre.if_handoff_required(actions):
         handoff_input = stages_post.prepare_handoff_input(extracted or {}, {
             "normalized": normalized, "system_orchestrator": decision, "actions": actions,
-            "normalize_validate": normalized})
+            "normalize_validate": normalized,
+            # Reviewer-verified: the node reads Get Conversation State for
+            # conversation_summary/recent_turns/booking_context — without it staff
+            # received a bare handoff with no history.
+            "conversation_state": state_row})
         handoff_payload = (handoff_input or {}).get("handoff_input") or handoff_input or {}
         # Divergence (2026-09-17): the ported Restore Handoff Context raises when the
         # handoff RPC fails, which aborted the whole turn — the patient asking for a
@@ -803,7 +823,11 @@ async def _respond_tail(normalized: Dict[str, Any], state_row: Dict[str, Any], s
         "save_conversation_state": (save_result or {}).get("initial") or {},
         "save_conversation_state_retry_v18": (save_result or {}).get("retry") or {},
         "extract_single_agent_reply": extracted,
-        "response_policy_deterministic": policy, "reply_guard_deterministic": guard_for_delivery})
+        "response_policy_deterministic": policy, "reply_guard_deterministic": guard_for_delivery,
+        # Reviewer-verified dead-wiring: without these the outgoing row's ai_tokens and
+        # agent1/agent2 token metadata are always null while the data sits 30 lines up.
+        "deepseek_model": [{"usage": u} for u in ((timing or {}).get("agent_usage") or [])],
+        "deepseek_result_model": [{"usage": composer_usage}] if composer_usage else []})
     outgoing_row = await repository.log_outgoing_message(outgoing_params)
 
     # ── L80 Respond To Patient ─────────────────────────────────────────────────

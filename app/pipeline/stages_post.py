@@ -861,6 +861,10 @@ _DEFINITELY_NOT_EXECUTED_CODES = {
     "SAME_SLOT",
     "MISSING_REQUIRED_FIELDS",
     "CONFIDENCE_REVIEW_REQUIRED",
+    # Reviewer-verified: these two no-mutation rejections finalized INCONCLUSIVE,
+    # leaving the ledger unclaimable for the operation id ("تعذر التحقق..." forever).
+    "RESCHEDULE_NOT_ALLOWED",
+    "CANCEL_NOT_ALLOWED",
 }
 _RETRYABLE_CODES = {"CREATE_RETRYABLE", "CANCEL_RETRYABLE", "RESCHEDULE_RETRYABLE"}
 
@@ -1102,18 +1106,38 @@ def apply_resolved_booking_ids_deterministic(item: Dict[str, Any], inputs: Dict[
     resolved_slot_start = _prop(resolved, "resolved_slot_start_time")
 
     def _start_date_part() -> Optional[str]:
-        return _js_string(resolved_slot_start)[:10] if _js_truthy(resolved_slot_start) else None
+        # Reviewer-verified: the resolver row carries a raw asyncpg datetime for the
+        # timestamptz — _js_string(datetime) produced "[object Object]" and the date/
+        # time halves in booking_context became garbage. Coerce to ISO first.
+        if not _js_truthy(resolved_slot_start):
+            return None
+        value = resolved_slot_start.isoformat() if hasattr(resolved_slot_start, "isoformat") else _js_string(resolved_slot_start)
+        return value[:10]
 
     def _start_time_part() -> Optional[str]:
-        return _js_string(resolved_slot_start)[11:19] if _js_truthy(resolved_slot_start) else None
+        if not _js_truthy(resolved_slot_start):
+            return None
+        value = resolved_slot_start.isoformat() if hasattr(resolved_slot_start, "isoformat") else _js_string(resolved_slot_start)
+        return value[11:19]
 
     # Resolver output is the tenant-scoped database authority for IDs and labels;
     # keep doctor/service pairs together so an old state label cannot survive
-    # with a different database ID.
+    # with a different database ID. Reviewer-verified split: when the resolver
+    # names NO doctor for this turn (0 or 2+ matches) while the patient's text
+    # named one, the carried-over prior doctor_id must drop WITH the name —
+    # otherwise the booking confirms with the doctor the patient replaced.
+    entities_name_this_turn = _text_value(_prop(entities, "doctor_name") or "").strip()
+    prior_name_text = _text_value(_prop(prior_booking, "doctor_name") or "").strip()
+    resolver_named_doctor = _js_truthy(resolved_doctor_id) or _js_truthy(resolved_doctor_name)
+    same_doctor = bool(
+        prior_name_text
+        and (entities_name_this_turn in prior_name_text or prior_name_text in entities_name_this_turn)
+    )
+    drop_prior_doctor = bool(entities_name_this_turn and not resolver_named_doctor and not same_doctor)
     booking_context = {
         **prior_booking,
-        "doctor_id": _first_truthy(resolved_doctor_id, _prop(prior_booking, "doctor_id"), None),
-        "doctor_name": _first_truthy(resolved_doctor_name, _prop(prior_booking, "doctor_name"), None),
+        "doctor_id": None if drop_prior_doctor else _first_truthy(resolved_doctor_id, _prop(prior_booking, "doctor_id"), None),
+        "doctor_name": None if drop_prior_doctor else _first_truthy(resolved_doctor_name, _prop(prior_booking, "doctor_name"), None),
         "service_id": _first_truthy(resolved_service_id, _prop(prior_booking, "service_id"), None),
         "service_name": _first_truthy(resolved_service_name, _prop(prior_booking, "service_name"), None),
         "appointment_type": _first_truthy(_prop(prior_booking, "appointment_type"), _prop(entities, "appointment_type"), None),

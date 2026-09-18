@@ -348,6 +348,10 @@ def _normalize_phone(raw_input, default_country=None):
             if s.startswith(rule['code']):
                 return s
         return s
+    # Reviewer fix: '00' international prefix ('00966501234567') previously fell into
+    # the local-0 strip and produced a corrupted +9660966... number.
+    if s.startswith('00'):
+        return '+' + s[2:]
     for rule in PHONE_RULES.values():
         if len(s) in rule['lengths'] and any(s.startswith(p) for p in rule['prefixes']):
             return rule['code'] + s
@@ -390,8 +394,11 @@ def _date_within_horizon(date_iso, now_local_date, horizon_days):
 
 
 def _normalize_time(value):
-    """JS normalizeTime."""
+    """JS normalizeTime. Reviewer fix: a single-digit hour ("9:00") is a valid patient
+    statement — zero-pad instead of dropping the requested time."""
     t = _js_string(_js_or(value, '')).strip()
+    if re.fullmatch(r'([0-9]):[0-5][0-9]', t):
+        t = '0' + t
     if not TIME_24.fullmatch(t):
         return None
     return t[:5] if len(t) == 8 else (t + ':00' if len(t) == 4 else t)
@@ -547,7 +554,7 @@ _DAY_WORD_OFFSETS = [
 ]
 # Same-day deictics directly after a weekday name mean TODAY, not next week.
 _SAME_DAY_DEICTIC_RE = re.compile(r'(?:السبت|الأحد|الاحد|الاثنين|الثلاثاء|الأربعاء|الاربعاء|الخميس|الجمعة)\s*(?:هذا|هذي|ده|دا|دهم|الحالي)')
-_WEEKDAY_TARGETS = [('السبت', 6), ('الأحد', 0), ('الاحد', 0), ('الاثنين', 1), ('الثلاثاء', 2), ('الأربعاء', 3), ('الاربعاء', 3), ('الخميس', 4), ('الجمعة', 5)]
+_WEEKDAY_TARGETS = [('السبت', 6), ('الاحد', 0), ('الاثنين', 1), ('الثلاثاء', 2), ('الاربعاء', 3), ('الخميس', 4), ('الجمعه', 5), ('الجمعة', 5), ('الاحد', 0)]
 
 
 def _absorb_day_word_to_iso(raw, now_iso_date):
@@ -557,6 +564,11 @@ def _absorb_day_word_to_iso(raw, now_iso_date):
     s = _js_string(_js_or(raw, '')).strip()
     s = unicodedata.normalize('NFKC', s)
     s = _HARAKAT_RE.sub('', s)
+    s = _WS_PLUS_RE.sub(' ', s).strip()
+    # Reviewer fix: fold letter variants (الجمعه/الإثنين/الاربعه) exactly like
+    # normalizeArabicUserText — harakat-only folding left the colloquial spellings
+    # unmatched, the date went None, and _keep resurrected the REJECTED prior date.
+    s = re.sub('[أإآٱ]', 'ا', s).replace('ة', 'ه')
     s = _WS_PLUS_RE.sub(' ', s).strip()
     if not s or not ISO_DATE.fullmatch(_js_string(_js_or(now_iso_date, ''))):
         return None
@@ -570,16 +582,19 @@ def _absorb_day_word_to_iso(raw, now_iso_date):
             break
     if delta is None:
         base_wd = _utc_weekday(base)
-        for word, target in _WEEKDAY_TARGETS:
-            if word in s:
-                delta = (target - base_wd + 7) % 7
-                if delta == 0 and not _SAME_DAY_DEICTIC_RE.search(s):
-                    # "الخميس" said on a Thursday means NEXT Thursday — a patient naming
-                    # today's weekday is booking ahead, not asking for a same-day slot
-                    # that almost certainly no longer exists. An explicit same-day
-                    # marker ("السبت ده") still means today.
-                    delta = 7
-                break
+        # Reviewer fix: "الجمعة أو السبت" resolves by FIRST MENTION position, not table
+        # order (السبت precedes الجمعة in the table and used to win the wrong way).
+        hits = [(s.find(word), target) for word, target in _WEEKDAY_TARGETS if word in s]
+        hits = [(pos, target) for pos, target in hits if pos >= 0]
+        if hits:
+            pos, target = min(hits)
+            delta = (target - base_wd + 7) % 7
+            if delta == 0 and not _SAME_DAY_DEICTIC_RE.search(s):
+                # "الخميس" said on a Thursday means NEXT Thursday — a patient naming
+                # today's weekday is booking ahead, not asking for a same-day slot
+                # that almost certainly no longer exists. An explicit same-day
+                # marker ("السبت ده") still means today.
+                delta = 7
     if delta is None:
         return None
     iso = _iso_from_ms(base + delta * 86400000)
@@ -726,7 +741,14 @@ def _validate_contract(raw, ctx):
         warnings.append('entities_time_invalid')
     age = ent.get('patient_age')
     if age is not None and age != '':
-        n = _js_parse_int(re.sub(r'[^0-9]', '', _to_english_digits(_js_string(age))))
+        raw_age = _to_english_digits(_js_string(age))
+        # Reviewer fix: "2.5" (sintin w noss) previously concatenated to 25 — a 12x
+        # corruption. Decimal ages floor to the whole year instead.
+        dec = re.match(r'\s*(\d{1,3})(?:\.(\d+))?\s*$', raw_age)
+        if dec:
+            n = int(dec.group(1))
+        else:
+            n = _js_parse_int(re.sub(r'[^0-9]', '', raw_age))
         if _is_finite(n) and 0 <= n <= 130:
             age = n
         else:

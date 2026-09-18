@@ -781,7 +781,7 @@ def _validate_contract(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "patient_age": age,
         "patient_address": _clean_str(_prop(ent, "patient_address")),
         "appointment_id": appointment_id_out,
-        "booking_number": _clean_str(_prop(ent, "booking_number")),
+        "booking_number": _clean_str(_first_truthy(_prop(ent, "booking_number"), _prop(ent, "reference"), None)),
     }
 
     op = _obj_or_empty(_prop(c, "operation_proposal"))

@@ -179,6 +179,10 @@ def _normalize_phone(raw_input, default_country=None):
             if s.startswith(rule['code']):
                 return s
         return s
+    # Reviewer fix: '00' international prefix ('00966501234567') previously fell into
+    # the local-0 strip and produced a corrupted +9660966... number.
+    if s.startswith('00'):
+        return '+' + s[2:]
     for rule in PHONE_RULES.values():
         if len(s) in rule['lengths']:
             starts_with_valid_prefix = any(s.startswith(p) for p in rule['prefixes'])
@@ -254,7 +258,10 @@ _ENGLISH_ADDRESS_KEYWORDS = re.compile(
 # Arabic keywords are word-delimited: حي matches only when followed by a space
 # ('حي الروضة'), never inside 'حياك' / 'يحيك'.
 _ARABIC_ADDRESS_KEYWORDS = re.compile(
-    r'(?:شارع|طريق|مبنى|بناية|عمارة|طابق|دور|شقة|رقم|حي' + _JS_S + r'+|منطقة|مدينة|عنوان|بجوار|بالقرب|ميدان|محلة)'
+    # Reviewer fix: bare دور/رقم matched substrings ('الدورة الشهرية', 'رقم حجزي...')
+    # and the complaint text was saved as the patient's home address. دور/شقة/طابق now
+    # require the following space, and bare رقم requires digits after it ('رقم 12').
+    r'(?:شارع|طريق|مبنى|بناية|عمارة|طابق|دور|شقة|حي' + _JS_S + r'+|منطقة|مدينة|عنوان|بجوار|بالقرب|ميدان|محلة|رقم' + _JS_S + r'+[0-9])'
 )
 _POSTAL_RE = re.compile(r'(?<![A-Za-z0-9_])[0-9]{4,6}(?![A-Za-z0-9_])')
 _NEWLINE_TAB_RE = re.compile(r'[\r\n\t]')
