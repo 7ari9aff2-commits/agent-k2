@@ -469,7 +469,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                       COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
                       COALESCE(sum(cost), 0)::numeric AS cost
                FROM ai_requests
-               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval""",
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval""",
             clinic_id, days)
         by_model = await conn.fetch(
             """SELECT model, count(*)::int AS calls,
@@ -478,7 +478,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                       COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
                       COALESCE(sum(cost), 0)::numeric AS cost
                FROM ai_requests
-               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval
                GROUP BY model ORDER BY total_tokens DESC""",
             clinic_id, days)
         by_day = await conn.fetch(
@@ -488,7 +488,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                       COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
                       COALESCE(sum(cost), 0)::numeric AS cost
                FROM ai_requests
-               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval
                GROUP BY 1 ORDER BY 1 DESC""",
             clinic_id, days)
         recent = await conn.fetch(
