@@ -1,4 +1,6 @@
 # Offline natural-conversation test against the REAL model + REAL prompt (read-only)
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio, json, sys
 from app.pipeline import normalize as normalize_mod
 from app.pipeline import stages_pre
