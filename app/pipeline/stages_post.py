@@ -25,7 +25,6 @@ import base64
 import json
 import math
 import re
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from app.core.js_semantics import is_finite_num as _is_finite_num, obj_or_empty as _obj_or_empty
@@ -210,11 +209,6 @@ def _date_parse(value: Any) -> float:
         return _NAN
 
 
-def _ws_collapse(value: Any) -> str:
-    """JS .replace(/\\s+/g, ' ').trim()."""
-    return re.sub(r"\s+", " ", _js_string(value)).strip()
-
-
 # ---------------------------------------------------------------------------
 # Prepare Single Agent Result Context
 # ---------------------------------------------------------------------------
@@ -228,78 +222,6 @@ _AR_MONTHS_063 = [
 _AR_WEEKDAYS_063 = [
     "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخ\ufffd\u0085يس", "الج\ufffd\u0085عة", "السبت",
 ]
-
-
-def _natural_date_text_063(value: Any) -> Optional[str]:
-    p = _js_string(_first_truthy(value, "")).strip().split("-")
-    if len(p) != 3 or len(p[0]) != 4:
-        return None
-    y = _js_parse_int(p[0])
-    m = _js_parse_int(p[1])
-    d = _js_parse_int(p[2])
-    if (
-        not _is_finite_num(y) or not _is_finite_num(m) or not _is_finite_num(d)
-        or m < 1 or m > 12 or d < 1 or d > 31
-    ):
-        return None
-    # JS new Date(Date.UTC(y, m-1, d)).getUTCDay(): month/day rollover is normalised.
-    day = datetime(int(y), int(m), 1, tzinfo=timezone.utc) + timedelta(days=int(d) - 1)
-    weekday_index = (day.weekday() + 1) % 7  # JS getUTCDay: Sun=0..Sat=6
-    return (
-        "يو\ufffd\u0085 " + _AR_WEEKDAYS_063[weekday_index] + " "
-        + _js_string(d) + " " + _AR_MONTHS_063[int(m) - 1]
-    )
-
-
-def _natural_time_text_063(value: Any) -> Optional[str]:
-    s = _js_string(_first_truthy(value, "")).strip()
-    i = s.find(":")
-    if i < 1:
-        return None
-    h = _js_parse_int(s[:i])
-    mi = s[i + 1:i + 3]
-    if not _is_finite_num(h) or len(mi) != 2 or _js_number(mi) != _js_number(mi):
-        return None
-    hh = h % 12
-    if hh == 0:
-        hh = 12
-    return _js_string(hh) + ":" + mi + " " + ("\ufffd\u0085ساءً" if h >= 12 else "صباحًا")
-
-
-def _is_business_envelope(value: Any) -> bool:
-    if not _js_truthy(value) or not isinstance(value, dict):
-        return False
-    facts = _prop(value, "facts")
-    facts = facts if isinstance(facts, (dict, list)) else {}
-    decision = _prop(value, "system_decision")
-    decision = decision if isinstance(decision, (dict, list)) else {}
-    return bool(
-        _js_truthy(_prop(value, "response_code"))
-        or _js_truthy(_prop(facts, "response_code"))
-        or _js_truthy(_prop(decision, "response_code"))
-        or _js_truthy(_prop(value, "operation_status"))
-        or _js_truthy(_prop(facts, "operation_status"))
-        or _js_truthy(_prop(value, "availability_outcome"))
-        or _js_truthy(_prop(facts, "availability_outcome"))
-        or _dig(value, "deterministic_slot_lookup", "executed") is True
-        or _dig(decision, "deterministic_slot_lookup", "executed") is True
-        or _prop(value, "operation_finalized") is True
-        or _prop(value, "child_contract_checked") is True
-        or _js_truthy(_prop(value, "mutation_status"))
-    )
-
-
-def _normalize_location(value: Any) -> Optional[Dict[str, Any]]:
-    if not _js_truthy(value) or not isinstance(value, dict):
-        return None
-    cfg = _prop(value, "location_config")
-    cfg = cfg if isinstance(cfg, dict) else {}
-    return {
-        **cfg,
-        "address": _first_truthy(_prop(cfg, "address"), _prop(value, "address"), None),
-        "maps_url": _first_truthy(_prop(cfg, "maps_url"), _prop(value, "maps_url"), _prop(value, "google_maps_url"), None),
-        "is_placeholder": _prop(cfg, "is_placeholder") is True or _prop(value, "is_placeholder") is True,
-    }
 
 
 # ---------------------------------------------------------------------------

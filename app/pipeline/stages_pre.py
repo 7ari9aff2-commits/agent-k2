@@ -2738,6 +2738,36 @@ def _estimate_tokens(chars: Any) -> float:
     return float(max(1, _js_round(_js_number(chars) / _CHARS_PER_TOKEN)))
 
 
+def _read_model_tokens_parts(rows: Any) -> Dict[str, Any]:
+    """Split provider tokenUsage into input/output sums (2026-09-18 cost accounting).
+
+    Reads the same key variants as _read_model_tokens but keeps the halves separate so
+    ai_requests can price input and output differently. Unsplit totals count as output.
+    """
+    p_sum = 0.0
+    c_sum = 0.0
+    for row in rows if isinstance(rows, list) else []:
+        d = row if isinstance(row, dict) else {}
+        resp = _prop(d, "response")
+        u = _first_truthy(
+            _prop(d, "tokenUsage"),
+            _prop(d, "usage"),
+            (_first_truthy(_prop(resp, "tokenUsage"), _prop(resp, "usage")) if _js_truthy(resp) else _UNDEFINED),
+            {},
+        )
+        u = u if isinstance(u, dict) else {}
+        p = _js_number_or0(_coalesce(_prop(u, "promptTokens"), _prop(u, "inputTokens"), _prop(u, "prompt_tokens"), _prop(u, "input_tokens")))
+        c = _js_number_or0(_coalesce(_prop(u, "completionTokens"), _prop(u, "outputTokens"), _prop(u, "completion_tokens"), _prop(u, "output_tokens")))
+        t = _js_number(_coalesce(_prop(u, "totalTokens"), _prop(u, "total_tokens"), _prop(u, "total")))
+        if _is_finite_num(p) and p > 0:
+            p_sum += p
+        if _is_finite_num(c) and c > 0:
+            c_sum += c
+        if (_is_finite_num(t) and t > 0) and not (_is_finite_num(p) and p > 0) and not (_is_finite_num(c) and c > 0):
+            c_sum += t
+    return {"input": p_sum if p_sum > 0 else None, "output": c_sum if c_sum > 0 else None}
+
+
 def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Source node: Compute AI Request Usage (Deterministic) (extracted/code/Compute_AI_Request_Usage_Deterministic.js).
 
@@ -2766,12 +2796,20 @@ def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[st
 
     rows: List[Dict[str, Any]] = []
 
-    def _push_row(node_name: str, exact_tokens: Any, input_est: Any, output_est: Any) -> None:
+    def _push_row(node_name: str, exact_tokens: Any, input_est: Any, output_est: Any,
+                  exact_input: Any = None, exact_output: Any = None) -> None:
         exact_num = _js_number(exact_tokens)
         exact = exact_num if (_is_finite_num(exact_num) and exact_num > 0) else None
-        input_tokens = _estimate_tokens(input_est) if exact is None else None
-        output_tokens = _estimate_tokens(output_est) if exact is None else None
-        total = exact if exact is not None else ((input_tokens or 0) + (output_tokens or 0))
+        parts_given = (_is_finite_num(_js_number(exact_input)) and _js_number(exact_input) > 0) or                       (_is_finite_num(_js_number(exact_output)) and _js_number(exact_output) > 0)
+        if exact is not None and parts_given:
+            # Provider reported the split — prefer it over the total-only estimate.
+            input_tokens = _int_if_integral(_js_number(exact_input)) if _js_number(exact_input) > 0 else None
+            output_tokens = _int_if_integral(_js_number(exact_output)) if _js_number(exact_output) > 0 else None
+            total = (input_tokens or 0) + (output_tokens or 0) or exact
+        else:
+            input_tokens = _estimate_tokens(input_est) if exact is None else None
+            output_tokens = _estimate_tokens(output_est) if exact is None else None
+            total = exact if exact is not None else ((input_tokens or 0) + (output_tokens or 0))
         if not total:
             return
         meta: Dict[str, Any] = {
@@ -2798,9 +2836,13 @@ def compute_ai_request_usage_deterministic(item: Dict[str, Any], inputs: Dict[st
         })
 
     if prompt_chars > 0 or reply1:
-        _push_row("DeepSeek Model", _read_model_tokens(inputs.get("deepseek_model")), prompt_chars + 1400, _u16_len(reply1))
+        _agent_parts = _read_model_tokens_parts(inputs.get("deepseek_model"))
+        _push_row("DeepSeek Model", _read_model_tokens(inputs.get("deepseek_model")), prompt_chars + 1400, _u16_len(reply1),
+                  exact_input=_agent_parts["input"], exact_output=_agent_parts["output"])
     if reply2:
-        _push_row("Result Reply Composer", _read_model_tokens(inputs.get("deepseek_result_model")), _u16_len(ctx2) + 2400, _u16_len(reply2))
+        _composer_parts = _read_model_tokens_parts(inputs.get("deepseek_result_model"))
+        _push_row("Result Reply Composer", _read_model_tokens(inputs.get("deepseek_result_model")), _u16_len(ctx2) + 2400, _u16_len(reply2),
+                  exact_input=_composer_parts["input"], exact_output=_composer_parts["output"])
     return rows
 
 
@@ -3135,22 +3177,6 @@ def evaluate_completed_create_replay(item: Dict[str, Any], inputs: Dict[str, Any
 # ---------------------------------------------------------------------------
 
 _FENCED_JSON_RE = re.compile(r"```(?:json)?" + _JS_WS_CLASS + r"*([\s\S]*?)```", re.IGNORECASE)
-
-
-def _parse_model_contract(value: Any) -> Any:
-    """JS parse(): strip a json fence, slice {..}, JSON.parse; {} on failure."""
-    text = _js_trim(_js_string(_first_truthy(value, "")))
-    m = _FENCED_JSON_RE.search(text)
-    if m:
-        text = _js_trim(m.group(1))
-    first = text.find("{")
-    last = text.rfind("}")
-    if first >= 0 and last > first:
-        text = text[first:last + 1]
-    try:
-        return json.loads(text)
-    except Exception:
-        return {}
 
 
 def build_save_state_rpc_body(item: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:

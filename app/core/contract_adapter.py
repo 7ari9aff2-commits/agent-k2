@@ -28,26 +28,6 @@ from typing import TypedDict
 from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _first_not_none, js_and as _js_and, js_or as _js_or, truthy as _truthy
 
 
-class DeriveActionsInputs(TypedDict, total=False):
-    """Node outputs consumed by the JS via ``$(NodeName).first().json`` / ``$json``.
-
-    - ``current``              ← ``$json`` — the current item (required in practice).
-      Fields read: ``output``, ``system_decision``, ``operation_claim_decision``,
-      ``operation_claim_blocked``, ``operation_replay``, ``response_code``. It is
-      also spread at the top of the output.
-    - ``system_orchestrator``  ← ``$('System Orchestrator (Policy)').first().json`` —
-      ``system_decision`` (the upstream decision).
-    - ``normalize_validate``   ← ``$('Normalize & Validate').first().json`` —
-      ``clinic_id`` / ``conversation_id`` / ``patient_id`` for ``audit_context``.
-      All keys optional: an absent node behaves exactly like the JS try/catch
-      (yields ``{}``).
-    """
-
-    current: dict
-    system_orchestrator: dict
-    normalize_validate: dict
-
-
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
 
 

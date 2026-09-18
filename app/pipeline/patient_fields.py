@@ -32,7 +32,7 @@ Pure function: no I/O, no logging, stdlib only.
 """
 
 import re
-from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, js_len as _js_len, js_or as _js_or, truthy as _truthy, u16_index_of as _u16_index_of
+from app.core.js_semantics import dict_or_empty as _dict, js_len as _js_len, js_or as _js_or, truthy as _truthy
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──

@@ -123,31 +123,6 @@ def to_english_digits(s):
     return ''.join(ARABIC_INDIC.get(ch, ch) for ch in _js_string(s))
 
 
-def normalize_phone(raw_input, default_country=None):
-    """Source node: System Orchestrator (Policy) — normalizePhone helper (unused validator kept for fidelity)."""
-    if default_country is None:
-        default_country = 'SA'
-    if raw_input is None or raw_input == '':
-        return None
-    s = re.sub(r'[^\d+]', '', to_english_digits(_js_string(raw_input)))
-    if not s:
-        return None
-    if s[0] == '+':
-        for rule in PHONE_RULES.values():
-            if s.startswith(rule['code']):
-                return s
-        return s
-    for rule in PHONE_RULES.values():
-        if len(s) in rule['lengths'] and any(s.startswith(p) for p in rule['prefixes']):
-            return rule['code'] + s
-    if s.startswith('0'):
-        s = s[1:]
-    default_rule = PHONE_RULES.get(default_country)
-    if default_rule:
-        return default_rule['code'] + s
-    return '+' + s
-
-
 ISO_DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 TIME_24 = re.compile(r'([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?')
 UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
@@ -165,30 +140,12 @@ def iso_date_valid(date_iso):
         return False
 
 
-def date_within_horizon(date_iso, now_local_date, horizon_days):
-    """Source node: System Orchestrator (Policy) — dateWithinHorizon helper (unused in decide, kept for fidelity)."""
-    if not iso_date_valid(date_iso) or not iso_date_valid(now_local_date):
-        return False
-    a = _date_parse_ms(str(now_local_date) + 'T12:00:00Z')
-    b = _date_parse_ms(str(date_iso) + 'T12:00:00Z')
-    if a is None or b is None:
-        return False
-    days = round((b - a) / 86400000)
-    return days >= 0 and days <= (horizon_days or 60)
-
-
 def normalize_time(value):
     """Source node: System Orchestrator (Policy) — normalizeTime helper."""
     t = _js_string(_js_or(value, '')).strip()
     if not TIME_24.fullmatch(t):
         return None
     return t[:5] if len(t) == 8 else (t + ':00' if len(t) == 4 else t)
-
-
-def clean_str(value):
-    """Source node: System Orchestrator (Policy) — cleanStr helper (unused in decide, kept for fidelity)."""
-    s = re.sub(r'\s+', ' ', _js_string('' if value is None else value)).strip()
-    return s or None
 
 
 # Message classification comes exclusively from contract fields — never text.

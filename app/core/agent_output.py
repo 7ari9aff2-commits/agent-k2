@@ -57,25 +57,12 @@ snapshot once per call (they were distinct calls microseconds apart in JS).
 
 import calendar
 import json
-import math
 import re
 import time
 import unicodedata
 from datetime import datetime, timezone
 from typing import TypedDict
-from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, first_not_none as _first_not_none, is_finite as _is_finite, iso_from_ms as _iso_from_ms, js_and as _js_and, js_is_integer as _js_is_integer, js_len as _js_len, js_or as _js_or, truthy as _truthy, u16_index_of as _u16_index_of
-
-
-class NormalizeAgentOutputInputs(TypedDict, total=False):
-    """Node outputs consumed by the JS via ``$(NodeName).first().json`` / ``$json``."""
-
-    current: dict
-    normalize_validate: dict
-    conversation_state: dict
-    clinic_context: dict
-    patient_ownership: dict
-    persona_builder: dict
-    repair_prompt: dict
+from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, first_not_none as _first_not_none, is_finite as _is_finite, iso_from_ms as _iso_from_ms, js_and as _js_and, js_is_integer as _js_is_integer, js_len as _js_len, js_or as _js_or, truthy as _truthy
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──

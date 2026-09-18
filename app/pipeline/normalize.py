@@ -25,7 +25,7 @@ import re
 import time
 import unicodedata
 from datetime import datetime, timezone
-from app.core.js_semantics import cp_to_u16 as _cp_to_u16, dict_or_empty as _dict, is_finite as _is_finite, iso_from_ms as _iso_from_ms, js_len as _js_len, js_or as _js_or, truthy as _truthy
+from app.core.js_semantics import cp_to_u16 as _cp_to_u16, is_finite as _is_finite, iso_from_ms as _iso_from_ms, js_len as _js_len, js_or as _js_or, truthy as _truthy
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──

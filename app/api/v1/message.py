@@ -141,6 +141,20 @@ async def _dispatch_failure_handoff(normalized: Dict[str, Any], reason_code: str
         logger.exception("failure handoff dispatch failed — staff visibility lost for this turn")
 
 
+
+@router.get("/usage")
+async def clinic_token_usage(clinic_id: str, days: int = 30,
+                             authorized: bool = Depends(verify_internal_token)):
+    """Per-clinic token/cost accounting (owner console read-only).
+
+    Aggregates ai_requests (one row per LLM call): totals, per-model, per-day and the
+    20 most recent calls. Token-protected like the rest of the engine."""
+    if not clinic_id:
+        return K2JSONResponse(status_code=400, content={"ok": False, "error_code": "CLINIC_ID_REQUIRED"})
+    summary = await repository.get_clinic_usage_summary({"clinic_id": clinic_id, "days": days})
+    return K2JSONResponse(status_code=200, content={"ok": True, "usage": summary})
+
+
 @router.post("/message")
 async def process_patient_message(request: Request,
                                   authorized: bool = Depends(verify_internal_token)) -> K2JSONResponse:

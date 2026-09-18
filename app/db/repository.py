@@ -445,6 +445,68 @@ async def get_active_handoff_request(normalized: dict) -> dict:
     return dict(row) if row else {}
 
 
+async def get_clinic_usage_summary(ctx: dict) -> dict:
+    """Per-clinic token/cost accounting over ai_requests (added 2026-09-18).
+
+    ctx keys: clinic_id (required), days (default 30), include_recent (default False).
+    Returns {totals: {calls, input_tokens, output_tokens, total_tokens, cost},
+             by_model: [...], by_day: [...], recent: [...]}.
+    """
+    import json as _json
+
+    clinic_id = _js_str(_js_or((ctx or {}).get("clinic_id"), ""))
+    if not clinic_id:
+        return {}
+    days = int(_js_number(_js_or((ctx or {}).get("days"), 30)) or 30)
+    from app.db.pool import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        totals = await conn.fetchrow(
+            """SELECT count(*)::int AS calls,
+                      COALESCE(sum(input_tokens), 0)::bigint AS input_tokens,
+                      COALESCE(sum(output_tokens), 0)::bigint AS output_tokens,
+                      COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
+                      COALESCE(sum(cost), 0)::numeric AS cost
+               FROM ai_requests
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval""",
+            clinic_id, days)
+        by_model = await conn.fetch(
+            """SELECT model, count(*)::int AS calls,
+                      COALESCE(sum(input_tokens), 0)::bigint AS input_tokens,
+                      COALESCE(sum(output_tokens), 0)::bigint AS output_tokens,
+                      COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
+                      COALESCE(sum(cost), 0)::numeric AS cost
+               FROM ai_requests
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+               GROUP BY model ORDER BY total_tokens DESC""",
+            clinic_id, days)
+        by_day = await conn.fetch(
+            """SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS calls,
+                      COALESCE(sum(input_tokens), 0)::bigint AS input_tokens,
+                      COALESCE(sum(output_tokens), 0)::bigint AS output_tokens,
+                      COALESCE(sum(total_tokens), 0)::bigint AS total_tokens,
+                      COALESCE(sum(cost), 0)::numeric AS cost
+               FROM ai_requests
+               WHERE clinic_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+               GROUP BY 1 ORDER BY 1 DESC""",
+            clinic_id, days)
+        recent = await conn.fetch(
+            """SELECT conversation_id, provider, model, input_tokens, output_tokens,
+                      total_tokens, cost, latency_ms, created_at
+               FROM ai_requests
+               WHERE clinic_id = $1::uuid
+               ORDER BY created_at DESC LIMIT 20""",
+            clinic_id)
+    return {
+        "clinic_id": clinic_id, "days": days,
+        "totals": dict(totals) if totals else {},
+        "by_model": [dict(r) for r in by_model],
+        "by_day": [dict(r) for r in by_day],
+        "recent": [dict(r) for r in recent],
+    }
+
+
 async def get_outgoing_reply(ctx: dict) -> Optional[str]:
     """The delivered reply text for this idempotency key, or None.
 

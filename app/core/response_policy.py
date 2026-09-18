@@ -67,28 +67,6 @@ from app.core.js_semantics import dict_or_empty as _dict, first_not_none as _fir
 from app.core.js_semantics import truthy as _truthy
 
 
-class ResponsePolicyCtx(TypedDict, total=False):
-    """Node outputs consumed by the JS via ``$(NodeName).first().json`` / ``$json``.
-
-    See the module docstring for the exact node-name mapping behind every key. All
-    keys are optional (an absent node yields ``{}``, like the JS ``readNode``
-    try/catch); ``current`` (JS ``$json``) is required in practice.
-    """
-
-    current: dict
-    system_orchestrator: dict
-    persona_builder: dict
-    merge_completion: dict
-    execute_create: dict
-    execute_cancel: dict
-    execute_reschedule: dict
-    validate_repaired: dict
-    normalize_agent_output: dict
-    normalize_validate: dict
-    clinic_context: dict
-    conversation_state: dict
-
-
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
 
 

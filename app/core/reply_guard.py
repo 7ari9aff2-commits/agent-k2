@@ -45,15 +45,8 @@ Pure function: no I/O, no logging, stdlib only.
 
 import json
 import re
-from datetime import datetime, timezone
 from typing import TypedDict
 from app.core.js_semantics import dict_or_empty as _dict, js_and as _js_and, js_or as _js_or, truthy as _truthy
-
-
-class ReplyGuardInputs(TypedDict, total=False):
-    """Node outputs consumed by the JS via ``$(NodeName).first().json``."""
-
-    response_policy: dict
 
 
 # ── JS-semantics shims (same semantics as the ones in app/core/orchestrator.py) ──
