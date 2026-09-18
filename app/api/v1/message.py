@@ -99,8 +99,19 @@ def _contract_v3_of(normalized_agent: Dict[str, Any], adapted: Dict[str, Any]) -
 # runs against the FRESH state. Single-replica deployment (Railway); multi-replica
 # deployments would need a shared lock (Redis/DB advisory lock).
 _CONVERSATION_LOCKS: Dict[str, asyncio.Lock] = {}
+_CONVERSATION_LOCK_WAITERS: Dict[str, int] = {}
 _CONVERSATION_LOCKS_GUARD = asyncio.Lock()
 _CONVERSATION_LOCK_WAIT_SECONDS = 90.0
+
+
+def _lock_key_of(body: Dict[str, Any]) -> str:
+    """Mirror normalize's conversation-id chain (conversation_id|conversationId|thread_id|chat_id)
+    — keying on the raw body key alone left thread_id senders unserialized."""
+    for key in ("conversation_id", "conversationId", "thread_id", "chat_id"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 @router.post("/message")
@@ -116,25 +127,26 @@ async def process_patient_message(request: Request,
     if not isinstance(body, dict):
         body = {"raw_payload": body}
     correlation_id = str(body.get("idempotency_key") or body.get("conversation_id") or "")
-    conversation_key = str(body.get("conversation_id") or "")
+    conversation_key = _lock_key_of(body)
     logger.info("k2.request.start", extra={"correlation_id": correlation_id,
                                            "conversation_id": conversation_key})
 
     turn_lock: Optional[asyncio.Lock] = None
+    lock_acquired = False
     if conversation_key:
         async with _CONVERSATION_LOCKS_GUARD:
             turn_lock = _CONVERSATION_LOCKS.setdefault(conversation_key, asyncio.Lock())
+            _CONVERSATION_LOCK_WAITERS[conversation_key] = _CONVERSATION_LOCK_WAITERS.get(conversation_key, 0) + 1
         try:
             await asyncio.wait_for(turn_lock.acquire(), timeout=_CONVERSATION_LOCK_WAIT_SECONDS)
+            lock_acquired = True
         except asyncio.TimeoutError:
-            logger.warning("k2.request.turn_queue_timeout", extra={"correlation_id": correlation_id,
-                                                                   "conversation_id": conversation_key})
-            return K2JSONResponse(status_code=200, content={
-                "reply_text": None, "suppress_reply": True,
-                "response_code": "QUEUED_BEHIND_TURN",
-                "conversation_id": body.get("conversation_id"),
-                "clinic_id": body.get("clinic_id"),
-            })
+            # Never drop the message silently: persist it through the SAME deferred-batch
+            # mechanism the burst gate uses, so the deferred worker replays it later.
+            logger.warning("k2.request.turn_queue_timeout — deferring behind the active turn",
+                           extra={"correlation_id": correlation_id, "conversation_id": conversation_key})
+            deferred_payload = await _defer_behind_active_turn(body, raw_headers, raw_body)
+            return K2JSONResponse(status_code=200, content=deferred_payload)
     try:
         out = await _run(body, raw_headers, raw_body)
         logger.info("k2.request.done", extra={"correlation_id": correlation_id,
@@ -153,7 +165,41 @@ async def process_patient_message(request: Request,
                                                         "correlation_id": correlation_id})
     finally:
         if turn_lock is not None:
-            turn_lock.release()
+            if lock_acquired:
+                turn_lock.release()
+            async with _CONVERSATION_LOCKS_GUARD:
+                remaining = _CONVERSATION_LOCK_WAITERS.get(conversation_key, 1) - 1
+                if remaining <= 0:
+                    _CONVERSATION_LOCK_WAITERS.pop(conversation_key, None)
+                    # Evict when nobody holds or waits — otherwise the dict grows forever.
+                    if not turn_lock.locked():
+                        _CONVERSATION_LOCKS.pop(conversation_key, None)
+                else:
+                    _CONVERSATION_LOCK_WAITERS[conversation_key] = remaining
+
+
+async def _defer_behind_active_turn(body: Dict[str, Any], raw_headers: Dict[str, str],
+                                    raw_body: bytes) -> Dict[str, Any]:
+    """Persist a queue-timed-out message through the burst-deferred path (nothing is lost)."""
+    try:
+        normalized = normalize_mod.normalize_and_validate(body, raw_headers)
+        incoming = await repository.log_incoming_message(normalized)
+        deferred = await repository.mark_k2_burst_message_deferred({
+            "normalized": normalized, "gate": {"priority_allow": False}, "log_incoming_message": incoming})
+        await repository.log_k2_rate_decision({
+            "normalized": normalized, "gate": {"allowed": False}, "deferred": deferred,
+            "allowed": False, "log_incoming_message": incoming})
+        return {"reply_text": None, "suppress_reply": True,
+                "response_code": "QUEUED_BEHIND_TURN",
+                "batch_id": (deferred or {}).get("batch_id") or None,
+                "batch_message_count": (deferred or {}).get("batch_message_count") or 1,
+                "window_seconds": 15,
+                "conversation_id": body.get("conversation_id"),
+                "clinic_id": body.get("clinic_id")}
+    except Exception:
+        logger.exception("defer-behind-active-turn persistence failed — returning suppression only")
+        return {"reply_text": None, "suppress_reply": True, "response_code": "QUEUED_BEHIND_TURN",
+                "conversation_id": body.get("conversation_id"), "clinic_id": body.get("clinic_id")}
 
 
 async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: bytes = b"") -> Dict[str, Any]:

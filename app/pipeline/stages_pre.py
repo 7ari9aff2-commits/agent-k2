@@ -1399,23 +1399,33 @@ def build_persistent_conversation_state(item: Dict[str, Any], inputs: Dict[str, 
         # A restart resets SCHEDULING facts (date/time/slot) but keeps the patient's
         # stable identity facts (doctor/service/type) when the new request names no
         # doctor — a full wipe made the next turn re-ask a doctor the patient had
-        # already chosen. If the patient names another doctor, reset fully.
+        # already chosen. Two guards:
+        #   1. If THIS turn's decision resolved a doctor (patient named one), reset
+        #      fully — the decision's booking_context, not the fresh-offer `output`
+        #      row, is where the resolved doctor lives.
+        #   2. After a TERMINAL operation (completed/cancelled/failed) the previous
+        #      booking is finished business — carrying its doctor into a fresh
+        #      restart silently books the old doctor again.
         restart_names_doctor = _js_truthy(_first_truthy(
-            _dig(output, "contract", "entities", "doctor_name"),
-            _dig(output, "contract", "entities", "doctor_id"),
+            _dig(orch_output, "booking_context", "doctor_name"),
+            _dig(orch_output, "booking_context", "doctor_id"),
+            _dig(orch_output, "system_decision", "booking_context", "doctor_name"),
+            _dig(orch_output, "system_decision", "booking_context", "doctor_id"),
             None,
         ))
-        previous_booking_fallback: Any = (
-            {}
-            if restart_names_doctor
-            else {k: v for k, v in {
+        previous_operation_terminal = _js_string(_first_truthy(
+            _prop(previous, "operation_state"), _prop(previous, "operation_status"), ""
+        )).upper() in _STATE_TERMINAL
+        if restart_names_doctor or previous_operation_terminal:
+            previous_booking_fallback: Any = {}
+        else:
+            previous_booking_fallback: Any = {k: v for k, v in {
                 "doctor_id": _dig(previous, "booking_context", "doctor_id"),
                 "doctor_name": _dig(previous, "booking_context", "doctor_name"),
                 "service_id": _dig(previous, "booking_context", "service_id"),
                 "service_name": _dig(previous, "booking_context", "service_name"),
                 "appointment_type": _dig(previous, "booking_context", "appointment_type"),
             }.items() if _js_truthy(v)}
-        )
     else:
         previous_booking_fallback: Any = (
             stable_previous_booking if expired_prior_draft else _first_truthy(_prop(previous, "booking_context"), {})

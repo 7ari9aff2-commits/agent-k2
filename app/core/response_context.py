@@ -285,11 +285,43 @@ def _strip_code_fence(raw: str) -> str:
 
 
 _DIGIT_FOLD = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-_VALUE_TOKEN_RE = re.compile(r"[0-9][0-9:٫/.-]{2,}")
+_CLOCK_TOKEN_RE = re.compile(r"\b([0-9]{1,2}:[0-9]{2})\b")
+_ISO_DATE_TOKEN_RE = re.compile(r"\b([0-9]{4}-[0-9]{2}-[0-9]{2})\b")
+_NUMERIC_TOKEN_RE = re.compile(r"\b[0-9][0-9:٫/.-]{2,}\b")
 
 
 def _fold_digits(text: Any) -> str:
     return str(text or "").translate(_DIGIT_FOLD)
+
+
+def _clock_variants(token: str) -> set:
+    """A cited 14:30 slot may legitimately surface as 2:30 (12h rendering) — and vice versa."""
+    out = {token}
+    try:
+        hh, mm = token.split(":")
+        hour = int(hh)
+        if 0 <= hour < 24:
+            out.add(f"{hour:02d}:{mm}")
+            other = hour + 12 if hour < 12 else hour - 12
+            out.add(f"{other:02d}:{mm}")
+            out.add(f"{other}:{mm}")
+    except (ValueError, IndexError):
+        pass
+    return out
+
+
+def _date_variants(token: str) -> set:
+    """A cited 2026-09-20 date may legitimately surface as 20/9 or 20-09."""
+    out = {token}
+    try:
+        year, month, day = token.split("-")
+        out.add(f"{int(day)}/{int(month)}")
+        out.add(f"{int(day)}/{month}")
+        out.add(f"{int(day)}/{int(month)}/{year}")
+        out.add(f"{int(day)}-{int(month)}")
+    except (ValueError, IndexError):
+        pass
+    return out
 
 
 def _collect_fact_values(facts: Any, key: Optional[str] = None, out: Optional[set] = None) -> set:
@@ -310,6 +342,13 @@ def _collect_fact_values(facts: Any, key: Optional[str] = None, out: Optional[se
 
 
 def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, Any]) -> List[str]:
+    """Deterministic fabrication guard on the reply's concrete values.
+
+    Dates and clock times stated in the reply must trace to a cited fact (12h/24h and
+    day/month renderings count). Any OTHER numeric run (prices, durations, ages,
+    counts like "3 مواعيد") is deliberately NOT enforced — paraphrasing those is
+    legitimate and rejecting them burned the composer repair budget on false alarms.
+    """
     facts_by_id = {f.get("id"): f.get("value") for f in (context.get("facts") or []) if isinstance(f, dict)}
     allowed: set = set()
     for fid in evidence_ids or []:
@@ -318,8 +357,20 @@ def _value_grounding_errors(reply: str, evidence_ids: list, context: Dict[str, A
         return []
     errors: List[str] = []
     reply_folded = _fold_digits(reply)
-    for token in _VALUE_TOKEN_RE.findall(reply_folded):
-        if token not in allowed and not any(token in value for value in allowed):
+
+    allowed_variants: set = set()
+    for value in allowed:
+        for iso in _ISO_DATE_TOKEN_RE.findall(value):
+            allowed_variants |= _date_variants(iso)
+        for clock in _CLOCK_TOKEN_RE.findall(value):
+            allowed_variants |= _clock_variants(clock)
+    allowed |= allowed_variants
+
+    for token in _ISO_DATE_TOKEN_RE.findall(reply_folded):
+        if token not in allowed:
+            errors.append(f"reply_value_not_in_facts:{token}")
+    for token in _CLOCK_TOKEN_RE.findall(reply_folded):
+        if not (_clock_variants(token) & allowed):
             errors.append(f"reply_value_not_in_facts:{token}")
     return errors
 

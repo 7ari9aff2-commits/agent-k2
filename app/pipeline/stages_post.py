@@ -460,6 +460,25 @@ def apply_operation_claim_deterministic(item: Dict[str, Any], claim_input: Optio
         retryable = False
         operation_state = "conflict"
 
+    # Replay surfacing (added 2026-09-18): the stored ledger envelope carries the real
+    # booking identity — surface it so the composer can state the booking number and
+    # the state save keeps it (a bare "تم تنفيذ العملية سابقاً." leaves the patient
+    # without their reference after a mid-turn crash retry).
+    replay_surfaces: Dict[str, Any] = {}
+    if replay and isinstance(stored_response, dict):
+        stored_booking_number = _first_truthy(
+            _prop(stored_response, "booking_number"),
+            _dig(stored_response, "data", "booking_number"),
+            _dig(stored_response, "booking_context", "booking_number"),
+            None)
+        stored_appointment_id = _first_truthy(
+            _prop(stored_response, "appointment_id"),
+            _dig(stored_response, "data", "appointment_id"), None)
+        if _js_truthy(stored_booking_number):
+            replay_surfaces["booking_number"] = stored_booking_number
+        if _js_truthy(stored_appointment_id):
+            replay_surfaces["appointment_id"] = stored_appointment_id
+
     if replay or blocked:
         final_decision = {
             **decision,
@@ -475,6 +494,11 @@ def apply_operation_claim_deterministic(item: Dict[str, Any], claim_input: Optio
             "ledger_alert": ledger_alert,
             "escalate": ledger_alert or _prop(decision, "escalate") is True,
         }
+        if replay and replay_surfaces:
+            merged_booking_context = decision.get("booking_context") if isinstance(decision, dict) else {}
+            merged_booking_context = dict(merged_booking_context) if isinstance(merged_booking_context, dict) else {}
+            merged_booking_context.update(replay_surfaces)
+            final_decision["booking_context"] = merged_booking_context
     else:
         final_decision = {
             **decision,
@@ -502,6 +526,10 @@ def apply_operation_claim_deterministic(item: Dict[str, Any], claim_input: Optio
             _first_truthy(_prop(stored_response, "appointment_id"), _dig(stored_response, "data", "appointment_id"), None)
             if replay
             else None
+        ),
+        "booking_number": (
+            _first_truthy(replay_surfaces.get("booking_number"), None) if replay
+            else _prop(input_item, "booking_number")
         ),
         "system_decision": final_decision,
         "child_execution_allowed": claim_owner,

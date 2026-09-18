@@ -541,15 +541,23 @@ def _message_class(contract, state):
 # ── Deterministic day-word absorption (closed vocabulary → ISO) ──
 _DAY_WORD_OFFSETS = [
     ('بعد بكرة', 2), ('بعد بكره', 2), ('بعد غد', 2), ('بعدغد', 2), ('بعدغده', 2),
+    ('بعدبكرة', 2), ('بعدبكره', 2), ('بعدغده', 2),
     ('بكرة', 1), ('بكره', 1), ('غدا', 1), ('غدًا', 1),
     ('اليوم', 0)
 ]
+# Same-day deictics directly after a weekday name mean TODAY, not next week.
+_SAME_DAY_DEICTIC_RE = re.compile(r'(?:السبت|الأحد|الاحد|الاثنين|الثلاثاء|الأربعاء|الاربعاء|الخميس|الجمعة)\s*(?:هذا|هذي|ده|دا|دهم|الحالي)')
 _WEEKDAY_TARGETS = [('السبت', 6), ('الأحد', 0), ('الاحد', 0), ('الاثنين', 1), ('الثلاثاء', 2), ('الأربعاء', 3), ('الاربعاء', 3), ('الخميس', 4), ('الجمعة', 5)]
 
 
 def _absorb_day_word_to_iso(raw, now_iso_date):
-    """JS absorbDayWordToIso."""
+    """JS absorbDayWordToIso. Input is folded (NFKC, harakat stripped, spaces collapsed)
+    first — glued ('بعدبكرة') and diacritic ('بكِرة') spellings used to slip through to the
+    bare 'بكرة' rule and book a day early. Negation is a known limitation (closed vocab)."""
     s = _js_string(_js_or(raw, '')).strip()
+    s = unicodedata.normalize('NFKC', s)
+    s = _HARAKAT_RE.sub('', s)
+    s = _WS_PLUS_RE.sub(' ', s).strip()
     if not s or not ISO_DATE.fullmatch(_js_string(_js_or(now_iso_date, ''))):
         return None
     base = _date_parse_ms(_js_string(now_iso_date) + 'T00:00:00Z')
@@ -565,10 +573,11 @@ def _absorb_day_word_to_iso(raw, now_iso_date):
         for word, target in _WEEKDAY_TARGETS:
             if word in s:
                 delta = (target - base_wd + 7) % 7
-                if delta == 0:
+                if delta == 0 and not _SAME_DAY_DEICTIC_RE.search(s):
                     # "الخميس" said on a Thursday means NEXT Thursday — a patient naming
                     # today's weekday is booking ahead, not asking for a same-day slot
-                    # that almost certainly no longer exists.
+                    # that almost certainly no longer exists. An explicit same-day
+                    # marker ("السبت ده") still means today.
                     delta = 7
                 break
     if delta is None:
