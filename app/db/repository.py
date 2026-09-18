@@ -457,7 +457,10 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
     clinic_id = _js_str(_js_or((ctx or {}).get("clinic_id"), ""))
     if not clinic_id:
         return {}
-    days = int(_js_number(_js_or((ctx or {}).get("days"), 30)) or 30)
+    try:
+        days = max(1, min(int((ctx or {}).get("days") or 30), 365))
+    except (TypeError, ValueError):
+        days = 30
     from app.db.pool import get_pool
 
     pool = await get_pool()
@@ -470,7 +473,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                       COALESCE(sum(cost), 0)::numeric AS cost
                FROM ai_requests
                WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval""",
-            clinic_id, days)
+            clinic_id, str(days))
         by_model = await conn.fetch(
             """SELECT model, count(*)::int AS calls,
                       COALESCE(sum(input_tokens), 0)::bigint AS input_tokens,
@@ -480,7 +483,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                FROM ai_requests
                WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval
                GROUP BY model ORDER BY total_tokens DESC""",
-            clinic_id, days)
+            clinic_id, str(days))
         by_day = await conn.fetch(
             """SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS calls,
                       COALESCE(sum(input_tokens), 0)::bigint AS input_tokens,
@@ -490,7 +493,7 @@ async def get_clinic_usage_summary(ctx: dict) -> dict:
                FROM ai_requests
                WHERE clinic_id = $1::uuid AND created_at >= now() - ($2::text || ' days')::interval
                GROUP BY 1 ORDER BY 1 DESC""",
-            clinic_id, days)
+            clinic_id, str(days))
         recent = await conn.fetch(
             """SELECT conversation_id, provider, model, input_tokens, output_tokens,
                       total_tokens, cost, latency_ms, created_at
