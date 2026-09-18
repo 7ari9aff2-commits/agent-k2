@@ -344,6 +344,10 @@ async def _run(inbound: Dict[str, Any], raw_headers: Dict[str, str], raw_body: b
             },
             "response_policy_deterministic": policy,
             "reply_guard_deterministic": replay_guard,
+            # Same dead-wiring the main tail had: without these the replay outgoing
+            # row logs ai_tokens null even though the composer ran here.
+            "deepseek_result_model": [{"usage": (replay_composer or {}).get("usage") or {}}]
+            if (replay_composer or {}).get("usage") else [],
         })
         outgoing_row = await repository.log_outgoing_message(outgoing_params)
         return build_final_response(
