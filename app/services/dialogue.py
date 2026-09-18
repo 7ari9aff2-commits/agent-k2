@@ -183,6 +183,21 @@ def build_user_message(
         "faq_facts": faq if include_faq_facts else None,
         "current_message": x.get("message_text") or "",
     }
+    # Recent dialogue (added 2026-09-18, naturalness): the model never saw what was
+    # actually SAID — only structured snapshots — so pronouns like 'معاه' (him) broke
+    # and it re-asked answered questions. The last few real exchanges go into the
+    # payload; a large model resolves references and mirrors tone from them itself.
+    recent = st.get("recent_turns") if isinstance(st.get("recent_turns"), list) else []
+    recent_dialogue = []
+    for t in recent[-6:]:
+        if not isinstance(t, dict):
+            continue
+        role = str(t.get("role") or "user")
+        text = str(t.get("content") or t.get("text") or "")[:400]
+        if text.strip():
+            recent_dialogue.append({"role": role, "text": text})
+    if recent_dialogue:
+        payload["recent_dialogue"] = recent_dialogue
     return json.dumps(payload, ensure_ascii=False, separators=(", ", ": "))
 
 
