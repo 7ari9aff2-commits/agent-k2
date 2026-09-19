@@ -3,8 +3,8 @@
 آخر تحديث: 2026-09-19 — دفعة إصلاحات الفحص العميق. المرجع المعماري: `docs/ARCHITECTURE.md`.
 
 ## الوضع الحالي للإنتاج
-- آخر كوميت منشور على Railway: `37ae739` (النشر بأمر `python tools/deploy_core_engine.py` — **مفيش auto-deploy من git**).
-- الصحة 200، مصادقة `X-K2-Internal-Token` شغالة، 94 اختبار أخضر + توازية المنسق 46/46.
+- آخر كوميت منشور على Railway: `198eb1f` — دفعة إصلاحات حلقة التأكيد (النشر بأمر `python tools/deploy_core_engine.py` — **مفيش auto-deploy من git**؛ اتأكد من النسخة الحية بفحص 400 CLINIC_ID_INVALID على نقطة usage).
+- الصحة 200، مصادقة `X-K2-Internal-Token` شغالة (401 بدون توكن وبتوكن غلط)، 94 اختبار أخضر + توازية المنسق 46/46.
 - جدول `ai_requests` يسجل كل نداء LLM (clinic_id, model, input/output/total_tokens, cost, latency).
 - `GET /core-engine/usage?clinic_id=&days=` يرجع الإجماليات لكل عيادة (محمي بالتوكن، حي ومُتحقق).
 
