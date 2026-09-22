@@ -185,7 +185,7 @@ def test_full_booking_journey(monkeypatch):
         "kind": "presented_offer", "alternatives": [
             {"rank": 1, "slot_id": SLOT, "start_time": "2026-09-24T10:30:00Z",
              "local_date": "2026-09-24", "local_time": "10:30"}],
-        "expires_at": "2026-09-19T00:00:00Z"}
+        "expires_at": "2099-01-01T00:00:00Z"}
     offer_contract = _contract("متاح الخميس 10:30 🌸", "availability_inquiry",
                                {"doctor_name": "د. أحمد", "date": "2026-09-24", "time": "10:30"},
                                relation="follow_up")
@@ -235,7 +235,7 @@ def test_full_booking_journey(monkeypatch):
         "kind": "presented_offer", "alternatives": [
             {"rank": 1, "slot_id": SLOT, "start_time": "2026-09-24T10:30:00Z",
              "local_date": "2026-09-24", "local_time": "10:30"}],
-        "expires_at": "2026-09-19T00:00:00Z"}
+        "expires_at": "2099-01-01T00:00:00Z"}
     r5 = asyncio.run(_run(payload("أيوه صح", "evt-5"), {}))
     bound = STATE_STORE["state_data"]
     # The binding arm (added 2026-09-18) offers the live slot for final confirmation
