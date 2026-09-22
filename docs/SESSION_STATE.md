@@ -19,6 +19,13 @@ k2 - get_available_slots، k2 - search_clinic_faq، Handoff Child v1، SuperChat
 n8n-production-33955، (3) تليجرام: setWebhook على رابط n8n. شغالة فوراً لأن n8n حي وموصل بـ Postgres.
 اللي فضل شغال في n8n: الـ dispatcher الصادر، K2 Inbox Outbound Telegram، المراقبة والتقارير والاحتفاظ.
 
+## دفعة 2026-09-23 مساءً — جسر التنبيهات + الـ deferred worker
+1. **جسر تنبيهات المالك** (`app/core/alerting.py`): أي استثناء في النواة أو طبقة القنوات يبعت تنبيه تليجرام فوري للمالك (fire-and-forget + cooldown عشر دقائق لكل نوع) — بيسد عمى الـ n8n Error Monitor عن الجزء المهاجر.
+2. **الـ deferred worker in-process** (`app/services/deferred_worker.py`): بورت حرفي لـ 'K2 Deferred Message Worker' — claim كل 5 ثواني بنفس الدوال (k2_claim_deferred_batch_v2/complete/release/log) + replay عبر النواة in-process (metadata.k2_deferred_replay بيرخيص التوقيع) + التسليم لسه عبر الـ n8n dispatcher بنفس الـ auth. شغال من الـ lifespan.
+3. **pyflakes gate مسك عطل قبل النشر**: httpx/json ناقصين في الـ worker — البوابة الجديدة اشتغلت زي ما اتصممت.
+4. الإعدادات الجديدة على Railway: TELEGRAM_ALERT_BOT_TOKEN/CHAT_ID، OUTBOUND_DISPATCHER_URL/TOKEN، DEFERRED_WORKER_ENABLED=true.
+5. 129 اختبار أخضر.
+
 ## دفعة 2026-09-22 مساءً
 1. **إصلاح عطل حجز حي (تليجرام)**: رسالة تأكيد الحجز كانت تضرب 500 INTERNAL_ERROR — `NameError: _dig` في orchestrator.py سطر 1110/1159 (مسار P47/P42 binding) — الدالة كانت ناقصة من فيتشر offer-binding أصلاً واختبارات الرحلة كانت بتعدي سطرها بالقصور الذاتي. أضيفت الدالة بدلالات باقي الوحدات.
 2. **إصلاح فيكسچر الاختبار المعتمد على الزمن**: expires_at بتاريخ ثابت 2026-09-19 كان بقى في الماضي ففشّل T5 — بقى 2099. الاختبارات 101/101 أخضر.
