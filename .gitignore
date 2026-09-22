@@ -48,3 +48,13 @@ tools/list_n8n_creds.py
 tools/n8n_mcp_client.py
 tools/search_n8n_workflows.py
 _tmp_audit.py
+tools/old_account_vars.json
+tools/n8n_owner.txt
+
+# Migration probes & credentials (2026-09-22 Railway migration)
+tools/probe_*.py
+tools/railway_graphql.py
+tools/railway_inspect_*.py
+tools/migrate_n8n_import.py
+tools/old_account_vars.json
+tools/n8n_import_result.json
