@@ -1,0 +1,127 @@
+{
+ "id": "MNkfWuM8Sl0FfFdS",
+ "name": "MERUNA / FINAL / Notifications / 04 - Delivery Webhook v2 • Four Channels",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:09.875Z",
+ "updatedAt": "2026-09-22T20:13:20.044Z",
+ "isArchived": false,
+ "versionId": "f4439104-c334-48d1-90a8-174c0c137fb7",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "96cdc928-9470-4de1-9d62-d874683ee8a2",
+   "name": "POST /meruna/notifications/delivery",
+   "webhookId": "2188445f-fd72-4978-99ff-0b3a0d728c93",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    -688,
+    -144
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "meruna/notifications/delivery",
+    "options": {},
+    "authentication": "headerAuth"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "13d64349-0130-48a9-a704-14ac10474a5a",
+   "name": "Normalize Delivery Event",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -432,
+    -144
+   ],
+   "parameters": {
+    "jsCode": "const input = $json.body ?? $json;\nconst b = input && typeof input === 'object' ? input : {};\nfunction lit(value) {\n  if (value === null || value === undefined || value === '') return 'NULL';\n  return `'${String(value).replaceAll(\"'\", \"''\")}'`;\n}\nconst providerMessageId = b.provider_message_id || b.message_id || b.data?.message_id || b.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id || null;\nconst providerEventId = b.provider_event_id || b.event_id || b.id || null;\nconst status = String(b.provider_status || b.status || b.event_type || b.event || b.data?.status || '').toLowerCase();\nconst channelId = b.channel_id || b.data?.channel_id || null;\nconst phoneNumberId = b.phone_number_id || b.metadata?.phone_number_id || b.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id || null;\nconst channelType = b.channel_type || b.channel || b.data?.channel || null;\nconst tenantIdentifier = b.tenant_identifier || b.instance_id || b.data?.instance_id || null;\nconst metadata = JSON.stringify({source: 'notifications.v2.delivery_webhook', payload: b});\nlet statusQuery;\nif (!providerMessageId || !status) {\n  statusQuery = \"SELECT 'IGNORED_INVALID_DELIVERY_EVENT' AS result;\";\n} else {\n  statusQuery = `WITH c AS (\\n  SELECT id FROM public.channels\\n  WHERE deleted_at IS NULL\\n    AND (\\n      id = ${lit(channelId)}::uuid\\n      OR phone_number_id = ${lit(phoneNumberId)}\\n      OR (lower(type) = lower(${lit(channelType)}) AND (config->>'thikaa_instance_id') = ${lit(tenantIdentifier)})\\n    )\\n  ORDER BY CASE WHEN id = ${lit(channelId)}::uuid THEN 1 WHEN phone_number_id = ${lit(phoneNumberId)} THEN 2 ELSE 3 END, id\\n  LIMIT 1\\n)\\nSELECT public.notification_apply_channel_status(c.id, ${lit(providerMessageId)}, ${lit(providerEventId)}, ${lit(status)}, NULL, '${metadata.replaceAll(\"'\", \"''\")}'::jsonb) AS result\\nFROM c;`;\n}\nreturn [{json: {provider_message_id: providerMessageId, provider_status: status, status_query: statusQuery}}];"
+   }
+  },
+  {
+   "id": "0a91b876-8e10-4a9e-834c-fd4ebec6ab01",
+   "name": "Apply Monotonic Provider Status",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -144,
+    -144
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "'{{$json.status_query}}'",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "POST /meruna/notifications/delivery": {
+   "main": [
+    [
+     {
+      "node": "Normalize Delivery Event",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Normalize Delivery Event": {
+   "main": [
+    [
+     {
+      "node": "Apply Monotonic Provider Status",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "MNkfWuM8Sl0FfFdS",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:09.875Z",
+   "updatedAt": "2026-09-22T19:25:09.875Z"
+  }
+ ],
+ "activeVersion": null
+}

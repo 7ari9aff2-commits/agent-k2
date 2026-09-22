@@ -1,0 +1,167 @@
+{
+ "id": "XymCDIcs1wE5Hzsc",
+ "name": "TMP pg test5 KEEP",
+ "description": null,
+ "active": true,
+ "activeVersionId": "b0331cf9-9af3-484a-8ac0-6bf6422b4c3f",
+ "createdAt": "2026-09-22T20:11:48.832Z",
+ "updatedAt": "2026-09-22T20:13:31.089Z",
+ "isArchived": false,
+ "versionId": "b0331cf9-9af3-484a-8ac0-6bf6422b4c3f",
+ "versionCounter": 2,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "wh",
+   "name": "W",
+   "webhookId": "tmp-pg-test5",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "tmp-pg-test5",
+    "responseMode": "lastNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "q",
+   "name": "Q",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    200,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT c.type, c.provider, c.is_enabled FROM channels c LIMIT 3;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "W": {
+   "main": [
+    [
+     {
+      "node": "Q",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {},
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "XymCDIcs1wE5Hzsc",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T20:11:48.832Z",
+   "updatedAt": "2026-09-22T20:11:48.832Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "b0331cf9-9af3-484a-8ac0-6bf6422b4c3f",
+  "workflowId": "XymCDIcs1wE5Hzsc",
+  "nodes": [
+   {
+    "id": "wh",
+    "name": "W",
+    "webhookId": "tmp-pg-test5",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "tmp-pg-test5",
+     "responseMode": "lastNode",
+     "options": {}
+    }
+   },
+   {
+    "id": "q",
+    "name": "Q",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     200,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT c.type, c.provider, c.is_enabled FROM channels c LIMIT 3;",
+     "options": {}
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "W": {
+    "main": [
+     [
+      {
+       "node": "Q",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:31.093Z",
+  "updatedAt": "2026-09-22T20:13:31.093Z",
+  "workflowPublishHistory": [
+   {
+    "id": 84,
+    "workflowId": "XymCDIcs1wE5Hzsc",
+    "versionId": "b0331cf9-9af3-484a-8ac0-6bf6422b4c3f",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:31.117Z"
+   }
+  ]
+ }
+}

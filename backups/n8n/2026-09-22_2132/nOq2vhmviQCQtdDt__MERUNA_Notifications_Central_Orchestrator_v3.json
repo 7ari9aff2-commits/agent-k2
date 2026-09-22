@@ -1,0 +1,624 @@
+{
+ "id": "nOq2vhmviQCQtdDt",
+ "name": "MERUNA / Notifications / Central Orchestrator v3",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:16.776Z",
+ "updatedAt": "2026-09-22T20:13:22.693Z",
+ "isArchived": false,
+ "versionId": "22b396e8-d763-416a-8429-6347defdbe47",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "4535c64b-2449-4ca9-acb0-7d6fe4eae400",
+   "name": "Every Minute",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.3,
+   "position": [
+    240,
+    304
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "fee06f0d-f50a-4166-bb3f-365daa43c074",
+   "name": "01 Recover Expired Notification Leases",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    528,
+    48
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.notification_recover_expired_leases(500) AS recovered_jobs;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "dbdfa84b-5de6-4e5c-96f4-5ac80656d129",
+   "name": "02 Find Unlinked Notification Jobs",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    800,
+    48
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT e.id AS notification_domain_event_id\nFROM public.notification_domain_events e\nJOIN public.notification_jobs j ON j.source_event_id = e.id AND j.clinic_id = e.clinic_id\nWHERE e.processing_status IN ('PROCESSED','PENDING')\n  AND NOT EXISTS (SELECT 1 FROM public.notification_request_job_links l WHERE l.notification_domain_event_id = e.id AND l.notification_job_id = j.id)\n  AND e.event_type IN ('no_show.recovery_requested','reminder.requested','review.requested','review.external_request')\nORDER BY e.occurred_at, e.id\nLIMIT 100;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "11b2d50c-8b3e-46e9-9ad1-41a304bb0d39",
+   "name": "03 Link Notification Jobs to Owner",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    1088,
+    48
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.link_notification_request_jobs('{{$json.notification_domain_event_id}}'::uuid) AS linked;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "a8cc6443-a6e0-477d-a8e8-943788315d63",
+   "name": "04 Claim Notification Domain Events",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    528,
+    288
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.notification_claim_domain_events('n8n:notifications:v3:planner', 100, 300);",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "fcbe5814-5f75-4540-8ccb-832727e8a9f0",
+   "name": "05 Plan Notification Jobs Four Channels",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    800,
+    288
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH planned AS (\n  SELECT public.notification_plan_job(\n    e.clinic_id,\n    a.patient_id,\n    a.id,\n    conv.id,\n    ch.channel_id,\n    t.id,\n    e.id,\n    r.notification_type,\n    a.scheduled_at,\n    GREATEST(now(), a.scheduled_at + make_interval(mins => r.offset_minutes)),\n    a.scheduled_at,\n    CASE WHEN a.scheduled_at + make_interval(mins => r.offset_minutes) < now() THEN 'LATE' ELSE NULL END,\n    r.priority,\n    4,\n    'n8n:notifications:v3:' || e.id::text || ':' || r.id::text || ':' || ch.channel_id::text,\n    md5(e.id::text || ':' || r.id::text || ':' || ch.channel_id::text || ':' || COALESCE(t.template_fingerprint, ''))\n  ) AS job_record\n  FROM public.notification_domain_events e\n  JOIN public.appointments a ON a.id = e.appointment_id AND a.clinic_id = e.clinic_id AND a.deleted_at IS NULL\n  JOIN public.notification_rules r ON r.clinic_id = e.clinic_id AND r.event_type = e.event_type AND r.enabled = true\n    AND (e.event_type <> 'reminder.requested' OR (e.event_key LIKE 'communication.requested:%' AND EXISTS (SELECT 1 FROM public.communication_plan_decisions d WHERE d.notification_domain_event_id = e.id AND lower(r.notification_type) = lower(d.notification_type))))\n    AND (e.event_type <> 'no_show.recovery_requested' OR ((e.event_key LIKE 'no_show.recovery.initial:%' AND r.notification_type = 'NO_SHOW_RECOVERY_INITIAL') OR (e.event_key LIKE 'no_show.recovery.followup:%' AND r.notification_type = 'NO_SHOW_RECOVERY_FOLLOW_UP') OR (e.event_key LIKE 'no_show.recovery.closed:%' AND r.notification_type = 'NO_SHOW_RECOVERY_CLOSURE') OR (e.event_key LIKE 'no_show.recovery_requested:%' AND r.notification_type = 'NO_SHOW_RECOVERY_REQUEST')))\n  JOIN public.notification_templates t ON t.id = r.template_id AND t.clinic_id = r.clinic_id AND t.enabled = true\n  JOIN public.notification_dispatch_ready_channels ch ON ch.clinic_id = e.clinic_id AND ch.channel_type = lower(r.channel_type) AND ch.channel_type IN ('whatsapp','messenger','instagram','telegram')\n  JOIN LATERAL (\n    SELECT c.id\n    FROM public.conversations c\n    WHERE c.clinic_id = e.clinic_id\n      AND c.patient_id = a.patient_id\n      AND c.channel_id = ch.channel_id\n      AND c.deleted_at IS NULL\n      AND c.is_archived = false\n      AND NULLIF(btrim(c.channel_conversation_id), '') IS NOT NULL\n    ORDER BY c.last_activity_at DESC NULLS LAST, c.updated_at DESC, c.id DESC\n    LIMIT 1\n  ) conv ON true\n  WHERE e.id = '{{$json.id}}'::uuid\n)\nSELECT '{{$json.id}}'::uuid AS event_id, count(*)::integer AS planned_jobs FROM planned;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "14392665-5dac-4733-b443-86134a8b10b3",
+   "name": "06 Complete Notification Domain Event",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    1088,
+    288
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.notification_complete_domain_event('{{$json.event_id}}'::uuid, 'n8n:notifications:v3:planner', 'PROCESSED', NULL::jsonb) AS completed;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "ac335b4b-447a-4351-a4f7-de79a8070c8f",
+   "name": "07 Claim Four Channel Notification Jobs",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    528,
+    528
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.notification_claim_jobs_for_channels('n8n:notifications:v3:dispatcher', ARRAY['whatsapp','messenger','instagram','telegram'], 100, 900);",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "f3518eed-72bc-4c12-b949-edd4e7c49d24",
+   "name": "08 Begin Auditable Notification Attempt",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    800,
+    528
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT '{{$json.id}}'::uuid AS job_id, a.attempt_id, a.attempt_number FROM public.notification_begin_attempt('{{$json.id}}'::uuid, 'n8n:notifications:v3:dispatcher') a;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "9346ac3e-705b-44d5-98e2-ee2903e7cc15",
+   "name": "09 Prepare Notification Context",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    1088,
+    528
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT '{{$json.job_id}}'::uuid AS job_id, '{{$json.attempt_id}}'::uuid AS attempt_id, '{{$json.attempt_number}}'::integer AS attempt_number, j.clinic_id, j.patient_id, j.appointment_id, j.conversation_id, j.channel_id, j.template_id, j.notification_type, COALESCE(a.scheduled_at, os.start_time) AS appointment_scheduled_at, c.name AS clinic_name, d.name AS doctor_name, s.name AS service_name, COALESCE(p.name, trim(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')), 'عميل MERUNA') AS patient_name, COALESCE(NULLIF(p.contact_phone,''), NULLIF(p.booking_phone,''), NULLIF(p.phone,'')) AS patient_phone, conv.channel_conversation_id, rdc.channel_type, rdc.provider, rdc.tenant_identifier, t.body_template, t.required_variables, t.optional_variables, CASE WHEN j.notification_type = 'waitlist_offer_created' THEN ao.expires_at ELSE NULL END AS offer_expires_at, ch.config->>'thikaa_instance_id' AS thikaa_instance_id FROM public.notification_jobs j JOIN public.patients p ON p.id = j.patient_id AND p.clinic_id = j.clinic_id JOIN public.clinics c ON c.id = j.clinic_id LEFT JOIN public.appointments a ON a.id = j.appointment_id AND a.clinic_id = j.clinic_id LEFT JOIN LATERAL (SELECT o.expires_at, o.slot_id, o.patient_id FROM public.appointment_waitlist_offers o WHERE j.notification_type = 'waitlist_offer_created' AND o.id = CASE WHEN j.metadata->>'ai_offer_id' ~* '^[0-9a-f-]{36}$' THEN (j.metadata->>'ai_offer_id')::uuid END AND o.clinic_id = j.clinic_id AND o.patient_id = j.patient_id LIMIT 1) ao ON true LEFT JOIN public.appointment_slots os ON os.id = ao.slot_id AND os.clinic_id = j.clinic_id LEFT JOIN public.doctors d ON d.id = COALESCE(a.doctor_id, os.doctor_id) AND d.clinic_id = j.clinic_id LEFT JOIN public.services s ON s.id = COALESCE(a.service_id, os.service_id) AND s.clinic_id = j.clinic_id LEFT JOIN public.conversations conv ON conv.id = j.conversation_id AND conv.clinic_id = j.clinic_id JOIN public.notification_dispatch_ready_channels rdc ON rdc.channel_id = j.channel_id JOIN public.channels ch ON ch.id = j.channel_id AND ch.clinic_id = j.clinic_id JOIN public.notification_templates t ON t.id = j.template_id AND t.clinic_id = j.clinic_id WHERE j.id = '{{$json.job_id}}'::uuid LIMIT 1;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "7b4b4e03-6093-41ca-8042-5c089215398c",
+   "name": "10 Get Channel Secret",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    1360,
+    528
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM get_channel_secret_db('{{$json.channel_id}}'::uuid);",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "0b349891-2905-40cc-b7c4-671a2ada2395",
+   "name": "11 Merge Channel Secret",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1648,
+    528
+   ],
+   "parameters": {
+    "jsCode": "const context = $('09 Prepare Notification Context').item.json;\nconst secret = $json || {};\nreturn [{json: {...context, thikaa_api_token: secret.api_token || null, thikaa_signing_secret: secret.signing_secret || null, thikaa_tenant_identifier: secret.tenant_identifier || context.tenant_identifier || null}}];"
+   }
+  },
+  {
+   "id": "05da538f-f366-4431-ad5d-699dc97aef6c",
+   "name": "12 Render Four Channel Provider Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1920,
+    528
+   ],
+   "parameters": {
+    "jsCode": "const item = $json;\nconst vars = {patient_name: item.patient_name, clinic_name: item.clinic_name, doctor_name: item.doctor_name || 'الطبيب', service_name: item.service_name || '', appointment_date: item.appointment_scheduled_at ? new Date(item.appointment_scheduled_at).toLocaleDateString('ar-EG') : '', appointment_time: item.appointment_scheduled_at ? new Date(item.appointment_scheduled_at).toLocaleTimeString('ar-EG', {hour: '2-digit', minute: '2-digit'}) : '', offer_expires_at: item.offer_expires_at ? new Date(item.offer_expires_at).toLocaleString('ar-EG') : ''};\nlet message = item.body_template || '';\nfor (const [key, value] of Object.entries(vars)) message = message.replaceAll(`{{${key}}}`, value == null ? '' : String(value));\nconst channelMap = {whatsapp: item.patient_phone ? 'wa' : 'wd', messenger: 'fb', instagram: 'ig', telegram: 'tg'};\nconst recipient = item.channel_type === 'whatsapp' ? item.patient_phone : item.channel_conversation_id;\nconst providerReady = item.provider === 'thikaa' && !!(item.thikaa_tenant_identifier || item.tenant_identifier);\nconst recipientReady = !!recipient;\nconst messageReady = message.trim().length > 0;\nconst ready = providerReady && recipientReady && messageReady;\nconst preError = !providerReady ? 'PROVIDER_ADAPTER_NOT_CONFIGURED' : (!recipientReady ? 'RECIPIENT_NOT_AVAILABLE' : (!messageReady ? 'EMPTY_RENDERED_MESSAGE' : null));\nreturn [{json: {...item, rendered_message: message, recipient, thikaa_channel: channelMap[item.channel_type] || null, thikaa_url: item.thikaa_tenant_identifier ? `https://thikaa.com/${item.thikaa_tenant_identifier}/api/messaging/?action=send` : null, ready_to_send: ready, pre_error_category: preError}}];"
+   }
+  },
+  {
+   "id": "1d2897e1-6275-47a3-9ae7-3e1adcf8ec39",
+   "name": "13 Ready To Send",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    2208,
+    528
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "leftValue": "={{$json.ready_to_send}}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true"
+       }
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "cd33810d-9457-462b-a2ca-73836f78d18e",
+   "name": "14 Send Thikaa Channel Message",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2480,
+    400
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{$json.thikaa_url}}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "={{ 'Bearer ' + ($json.thikaa_api_token || '') }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={\"channel\":\"{{$json.thikaa_channel}}\",\"to\":\"{{$json.recipient}}\",\"message\":{{ JSON.stringify($json.rendered_message) }}}",
+    "options": {
+     "timeout": 10000
+    }
+   }
+  },
+  {
+   "id": "f7d1e438-3bd3-4e88-af35-c3e88e578a3e",
+   "name": "15 Normalize Provider Outcome",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2768,
+    400
+   ],
+   "parameters": {
+    "jsCode": "const raw = $json && typeof $json === 'object' ? $json : {};\nlet context = {};\ntry { context = $('12 Render Four Channel Provider Request').item.json || {}; } catch (_) { context = {}; }\nconst merged = {...context, ...raw};\nlet body = raw.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (_) { body = {}; } }\nif (!body || typeof body !== 'object' || Object.keys(body).length === 0) body = raw;\nbody = body && typeof body === 'object' ? body : {};\nconst explicitStatus = Number(raw.statusCode ?? raw.status_code ?? raw.status ?? 0);\nconst providerSuccess = raw.ok === true || raw.delivery === 'sent' || body.ok === true || body.delivery === 'sent';\nconst statusCode = explicitStatus || (providerSuccess ? 200 : 0);\nconst providerMessageId = body.message_id || body.id || raw.message_id || raw.provider_message_id || null;\nconst transportOk = (statusCode >= 200 && statusCode < 300 || providerSuccess) && raw.error == null && body.ok !== false;\nlet outcome; let errorCategory = null; let retryAfter = null;\nif (transportOk && providerMessageId) outcome = 'ACCEPTED';\nelse if (transportOk && !providerMessageId) { outcome = 'AMBIGUOUS'; errorCategory = 'MISSING_PROVIDER_MESSAGE_ID'; }\nelse if (statusCode === 429 || statusCode >= 500 || raw.error) { outcome = 'RETRYABLE_FAILURE'; errorCategory = statusCode === 429 ? 'RATE_LIMITED' : 'TRANSPORT_ERROR'; retryAfter = statusCode === 429 ? 60 : 30; }\nelse { outcome = 'PERMANENT_FAILURE'; errorCategory = 'PROVIDER_HTTP_' + (statusCode || 'NO_RESPONSE'); }\nfunction sqlLit(value) { if (value === null || value === undefined || value === '') return 'NULL'; return String.fromCharCode(39) + String(value).replaceAll(String.fromCharCode(39), String.fromCharCode(39,39)) + String.fromCharCode(39); }\nconst meta = JSON.stringify({status_code: statusCode, provider_body: body, channel_type: merged.channel_type || null});\nconst finishQuery = 'SELECT public.notification_finish_attempt(' + sqlLit(merged.job_id) + '::uuid, ' + sqlLit(merged.attempt_id) + '::uuid, ' + sqlLit('n8n:notifications:v3:dispatcher') + ', ' + sqlLit(outcome) + ', ' + sqlLit(providerMessageId) + '::text, ' + (statusCode || 'NULL') + '::integer, ' + sqlLit(errorCategory) + ', ' + (retryAfter || 'NULL') + '::integer, ' + sqlLit(meta) + '::jsonb) AS final_status;';\nreturn [{json: {...merged, finish_query: finishQuery}}];"
+   }
+  },
+  {
+   "id": "d0c93cc4-586a-4484-b917-6fef7d721dc6",
+   "name": "17 Finish Auditable Notification Attempt",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    3040,
+    528
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "{{$json.finish_query}}",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "38515b7d-eb32-4af9-91f7-ab8fb912e16a",
+   "name": "16 Build Pre-send Failure",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2480,
+    640
+   ],
+   "parameters": {
+    "jsCode": "function sqlLit(value) { if (value === null || value === undefined || value === '') return 'NULL'; return String.fromCharCode(39) + String(value).replaceAll(String.fromCharCode(39), String.fromCharCode(39,39)) + String.fromCharCode(39); }\nconst meta = JSON.stringify({reason: $json.pre_error_category, channel_type: $json.channel_type || null});\nconst finishQuery = 'SELECT public.notification_finish_attempt(' + sqlLit($json.job_id) + '::uuid, ' + sqlLit($json.attempt_id) + '::uuid, ' + sqlLit('n8n:notifications:v3:dispatcher') + ', ' + sqlLit('PERMANENT_FAILURE') + ', NULL, NULL, ' + sqlLit($json.pre_error_category || 'PRE_SEND_VALIDATION_FAILED') + ', NULL, ' + sqlLit(meta) + '::jsonb) AS final_status;';\nreturn [{json: {...$json, finish_query: finishQuery}}];"
+   }
+  },
+  {
+   "id": "8e9f9a9c-43ad-4a2a-8d5d-0f7e6b1b8a11",
+   "name": "00 Queue Due Notification Jobs",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    528,
+    -160
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.notification_queue_due_jobs_for_channels(ARRAY['whatsapp','messenger','instagram','telegram']::text[], 500) AS queued_jobs;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Every Minute": {
+   "main": [
+    [
+     {
+      "node": "01 Recover Expired Notification Leases",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "02 Find Unlinked Notification Jobs",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "04 Claim Notification Domain Events",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "00 Queue Due Notification Jobs",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "02 Find Unlinked Notification Jobs": {
+   "main": [
+    [
+     {
+      "node": "03 Link Notification Jobs to Owner",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "04 Claim Notification Domain Events": {
+   "main": [
+    [
+     {
+      "node": "05 Plan Notification Jobs Four Channels",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "05 Plan Notification Jobs Four Channels": {
+   "main": [
+    [
+     {
+      "node": "06 Complete Notification Domain Event",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "07 Claim Four Channel Notification Jobs": {
+   "main": [
+    [
+     {
+      "node": "08 Begin Auditable Notification Attempt",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "08 Begin Auditable Notification Attempt": {
+   "main": [
+    [
+     {
+      "node": "09 Prepare Notification Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "09 Prepare Notification Context": {
+   "main": [
+    [
+     {
+      "node": "10 Get Channel Secret",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "10 Get Channel Secret": {
+   "main": [
+    [
+     {
+      "node": "11 Merge Channel Secret",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "11 Merge Channel Secret": {
+   "main": [
+    [
+     {
+      "node": "12 Render Four Channel Provider Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "12 Render Four Channel Provider Request": {
+   "main": [
+    [
+     {
+      "node": "13 Ready To Send",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "13 Ready To Send": {
+   "main": [
+    [
+     {
+      "node": "14 Send Thikaa Channel Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "16 Build Pre-send Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "14 Send Thikaa Channel Message": {
+   "main": [
+    [
+     {
+      "node": "15 Normalize Provider Outcome",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "15 Normalize Provider Outcome": {
+   "main": [
+    [
+     {
+      "node": "17 Finish Auditable Notification Attempt",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "16 Build Pre-send Failure": {
+   "main": [
+    [
+     {
+      "node": "17 Finish Auditable Notification Attempt",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "00 Queue Due Notification Jobs": {
+   "main": [
+    [
+     {
+      "node": "07 Claim Four Channel Notification Jobs",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "nOq2vhmviQCQtdDt",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:16.776Z",
+   "updatedAt": "2026-09-22T19:25:16.776Z"
+  }
+ ],
+ "activeVersion": null
+}

@@ -1,0 +1,2230 @@
+{
+ "id": "zp5I9U2JNN5Sn4hH",
+ "name": "SuperChat Messenger - Trial",
+ "description": null,
+ "active": true,
+ "activeVersionId": "0d2a676d-c370-4374-acf3-58e45df41e3d",
+ "createdAt": "2026-09-22T19:25:11.431Z",
+ "updatedAt": "2026-09-22T20:13:34.349Z",
+ "isArchived": false,
+ "versionId": "0d2a676d-c370-4374-acf3-58e45df41e3d",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "9ec9b2f8-c16f-4fb3-a800-fba2b263714c",
+   "name": "Webhook Receive SUPERCHAT",
+   "webhookId": "f9dfabb4-2eb5-49e6-babd-62de3f3944a3",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -2736,
+    80
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "superchat-messenger-webhook",
+    "responseMode": "responseNode",
+    "options": {
+     "rawBody": true
+    }
+   }
+  },
+  {
+   "id": "919b9eaf-09fb-4094-81c7-1219e8202e9d",
+   "name": "Verify SUPERCHAT Signature",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -2464,
+    80
+   ],
+   "parameters": {
+    "jsCode": "// Superchat webhooks لا تبعث توقيع HMAC — نتحقق فقط من صحة البنية\n// (event message_inbound موجود وmessage فيه content)\n// الحماية الحقيقية: Superchat هو اللي بيعرف الـ webhook URL (secret endpoint)\n\nconst body = $json.body || {};\nconst event = body.event || '';\nconst msg = body.message || {};\n\nconst valid = (event === 'message_inbound' || event === '' ) &&\n              (typeof body === 'object');\n\nreturn [{ json: { signature_valid: valid, body: body } }];"
+   }
+  },
+  {
+   "id": "ca4b8804-d9f6-469d-a67c-435f858e9d77",
+   "name": "Signature Valid? SUPERCHAT",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -2256,
+    80
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "8dfa44e8-cf49-459f-91d0-008b73df8363",
+       "leftValue": "={{ $json.signature_valid }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "cf674b80-7069-4687-a6d8-a1d103ed597c",
+   "name": "Reject - Invalid Signature SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -2256,
+    368
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+    "options": {
+     "responseCode": 401
+    }
+   }
+  },
+  {
+   "id": "2377d864-4c17-4266-98e1-5699e7ac711f",
+   "name": "Parse SUPERCHAT Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1968,
+    64
+   ],
+   "parameters": {
+    "jsCode": "// Superchat inbound webhook payload (direct from SuperChat):\n// {\"id\":\"pe_...\",\"event\":\"message_inbound\",\n//  \"message\":{\"id\":\"ms_...\",\"status\":\"received\",\"content\":{\"body\":\"Hello!\",\"type\":\"text\"},\n//    \"direction\":\"inbound\",\"to\":{\"channel_id\":\"mc_...\"},\"from\":{\"id\":\"ct_...\",\"identifier\":\"+20...\"},\n//    \"conversation_id\":\"cv_...\"}}\n// Also accepts router-passed body (same structure) or\n// router-extracted format (message_text / channel_patient_id on top level).\n\nconst body = $json.body || {};\n\nconst event = body.event || '';\n\nif (event !== 'message_inbound') {\n  return [{ json: { is_status_update: true, event: event, raw_body: body } }];\n}\n\nconst msg = body.message || {};\nconst content = msg.content || {};\nconst from = msg.from || {};\nconst to = msg.to || {};\n\nconst channelPatientId = from.identifier || from.id || null;\nconst messageText = content.body || null;\nconst messageType = content.type || 'text';\nconst messageId = msg.id || null;\nconst channelId = to.channel_id || null;\nconst conversationId = msg.conversation_id || null;\n\nconst channelType = 'messenger';\n\nconst idempotencyKey = messageId ? `superchat_fb_${messageId}` : null;\n\nif (!channelPatientId || !messageText) {\n  return [{ json: { is_status_update: true, raw_body: body } }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId),\n    patient_name: from.name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: 'messenger',\n    superchat_channel_id: channelId,\n    superchat_conversation_id: conversationId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+   }
+  },
+  {
+   "id": "8538d876-e209-432f-8392-3d21c35d0581",
+   "name": "Log Webhook SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -1712,
+    64
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+    },
+    "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('superchat', $1, $2::jsonb, 'pending', now(), 'superchat_fb_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "e3235448-74a3-4256-9b0a-83c28d16a4b1",
+   "name": "Check Not Duplicate SUPERCHAT",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1456,
+    64
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "586a5416-2b62-4338-81a7-6f23c539cebc",
+       "leftValue": "={{ $json.is_new }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "347f9b54-f064-4c60-8669-89af71197772",
+   "name": "Respond Duplicate SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1504,
+    448
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "DUPLICATE_IGNORED",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "9b91e472-0852-4d20-b210-4843234a803c",
+   "name": "Is Real Message? SUPERCHAT",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1168,
+    48
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "2bdc45d0-1f6f-4a97-a7b0-208fbc2cb658",
+       "leftValue": "={{ $('Parse SUPERCHAT Message').item.json.is_status_update }}",
+       "rightValue": false,
+       "operator": {
+        "type": "boolean",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "d1282e2e-df37-4d1c-a981-14407ba74e2a",
+   "name": "Ignore - Status Update SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1232,
+    464
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "d65a0420-523d-4d6c-9a44-daf58cd165f7",
+   "name": "Is SUPERCHAT Channel?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -848,
+    32
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "30c42f9e-16b7-4dac-9b73-ad373bd8511e",
+       "leftValue": "={{ $('Parse SUPERCHAT Message').item.json.channel_code }}",
+       "rightValue": "messenger",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "7f52e193-5437-4bc0-a536-36d1c4c656a4",
+   "name": "Reject - Wrong Channel SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -944,
+    464
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+    "options": {
+     "responseCode": 400
+    }
+   }
+  },
+  {
+   "id": "36a342ed-469b-4e03-8f0f-ca5157c26ee7",
+   "name": "Lookup Clinic ID SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -480,
+    16
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Parse SUPERCHAT Message').item.json.superchat_channel_id ] }}"
+    },
+    "query": "SELECT (array_agg(c.id))[1] AS clinic_id,\n       (array_agg(ch.id))[1] AS channel_id,\n       COUNT(*)::int AS match_count\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'superchat'\n  AND ch.type = 'messenger'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.config->>'superchat_channel_id' = $1\nGROUP BY ch.config->>'superchat_channel_id'\nHAVING COUNT(*) = 1\nLIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "b394427a-d8d4-40a7-98a2-5768910266bc",
+   "name": "Check Clinic Found SUPERCHAT",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -240,
+    16
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "0ecabc6e-9eaa-4dc6-a636-5b380852c699",
+       "leftValue": "={{ $json.clinic_id }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "23a517d8-ce5f-4d98-bed0-c4f20e15b272",
+   "name": "Merge Clinic With Message SUPERCHAT",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const message = $('Parse SUPERCHAT Message').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "f963f1a2-72f4-42e3-9045-d4171942490d",
+   "name": "Get Channel Secret SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    80,
+    160
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.channel_id ] }}"
+    },
+    "query": "SELECT COALESCE(cs.provider, c.provider) AS provider, cs.api_token AS api_token, cs.signing_secret AS signing_secret, cs.tenant_identifier AS tenant_identifier\nFROM channels c\nLEFT JOIN get_channel_secret_db(c.id) cs ON true\nWHERE c.id = $1::uuid"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "47f4f1db-6be3-487f-b4f8-37f2fedd1980",
+   "name": "Merge Channel Secret SUPERCHAT",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    288,
+    160
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message SUPERCHAT').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    superchat_api_key: secretResult.api_token || null,\n    channel_signing_secret: secretResult.signing_secret || null,\n    superchat_channel_id: original.superchat_channel_id || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "32b6a6af-2792-462b-90d5-1764b6e7129a",
+   "name": "Find Or Create Patient SUPERCHAT",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    224,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $('Merge Channel Secret SUPERCHAT').item.json.clinic_id,\n  p_phone: $('Merge Channel Secret SUPERCHAT').item.json.channel_patient_id,\n  p_channel_type: 'messenger',\n  p_channel_patient_id: $('Merge Channel Secret SUPERCHAT').item.json.channel_patient_id,\n  p_full_name: $('Merge Channel Secret SUPERCHAT').item.json.patient_name\n}) }}",
+    "options": {
+     "timeout": 10000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth"
+   },
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "p2J79GLR4o6Yonjo",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "id": "de1a0d17-cad1-4b9f-ac7d-b7a37d3437c8",
+   "name": "Merge Patient Data SUPERCHAT",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    432,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message SUPERCHAT').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+   }
+  },
+  {
+   "id": "f72793cc-c771-4572-a16f-982738f65980",
+   "name": "Get Or Create Conversation SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "position": [
+    688,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $(\"Merge Patient Data SUPERCHAT\").item.json.clinic_id, $(\"Merge Patient Data SUPERCHAT\").item.json.patient_id, $(\"Merge Patient Data SUPERCHAT\").item.json.channel_id, $(\"Merge Patient Data SUPERCHAT\").item.json.channel_patient_id ] }}"
+    },
+    "query": "SELECT get_or_create_channel_conversation($1::uuid, $2::uuid, $3::uuid, $4);"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "22b30a44-3b3f-4731-8b5b-9d9719f0f16d",
+   "name": "Merge Conversation Data SUPERCHAT",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    336,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Patient Data SUPERCHAT').item.json;\nconst convResult = $input.item.json;\n\n// Response shape from Postgres RPC call:\n// { \"get_or_create_channel_conversation\": { conversation_id, is_new, channel_id, channel_type, channel_conversation_id, status } }\nlet raw = convResult;\nif (raw && raw.get_or_create_channel_conversation) {\n  raw = raw.get_or_create_channel_conversation;\n}\n\nlet conversationId = null;\nlet channelId = null;\nif (raw && typeof raw === 'object') {\n  conversationId = raw.conversation_id || (raw.result && raw.result.conversation_id) || null;\n  channelId = raw.channel_id || (raw.result && raw.result.channel_id) || null;\n}\n\nif (!conversationId) {\n  throw new Error('Failed to get conversation_id from RPC response: ' + JSON.stringify(convResult).slice(0, 200));\n}\n\nreturn [{\n  json: {\n    ...original,\n    conversation_id: conversationId,\n    channel_id: channelId,\n    conversation_is_new: raw.is_new === true\n  }\n}];"
+   }
+  },
+  {
+   "id": "e3f27d8f-f2f0-49fb-abab-6f50d6301cce",
+   "name": "Respond OK SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1488,
+    400
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "f4aad08a-75d6-43df-b9b3-71f8f791704c",
+   "name": "Call Core Engine SUPERCHAT",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    608,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      },
+      {
+       "name": "X-K2-Signature",
+       "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+    "options": {
+     "timeout": 180000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "28b1e6dd-400a-43f9-8aa5-ef517067d64e",
+   "name": "IF Core Engine Handoff Suppressed (SUPERCHAT)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    848,
+    368
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "40192769-d658-4933-b850-9d6577cf8f0c",
+       "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+       "operator": {
+        "operation": "true",
+        "singleValue": true,
+        "type": "boolean"
+       },
+       "rightValue": true
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "cfb12547-8b96-4f22-9af7-a3e86331bded",
+   "name": "Prepare SUPERCHAT Reply",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    864,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse SUPERCHAT Message').item.json.channel_patient_id || null;\n    } catch (e) { console.log('Could not get from Parse'); }\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+   }
+  },
+  {
+   "id": "2589cae4-891e-4fc2-bcdd-32e0b0fbfb86",
+   "name": "Send SUPERCHAT Reply",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1088,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.superchat.com/v1.0/messages",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-API-KEY",
+       "value": "={{ $('Merge Channel Secret SUPERCHAT').item.json.superchat_api_key || '' }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({\n  to: [{ identifier: $('Set Send Payload SUPERCHAT').item.json.superchat_contact_id }],\n  from: { channel_id: $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id },\n  content: { type: \"text\", body: $('Set Send Payload SUPERCHAT').item.json.thikaa_message }\n}) }}",
+    "options": {
+     "timeout": 15000
+    }
+   }
+  },
+  {
+   "id": "5c16611c-6f11-45c9-bf38-8db951dd0dc5",
+   "name": "Mark Webhook Processed SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    1264,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Merge Conversation Data SUPERCHAT').item.json.clinic_id, $('Merge Conversation Data SUPERCHAT').item.json.channel_id, $('Log Webhook SUPERCHAT').item.json.id, $('Parse SUPERCHAT Message').item.json.idempotency_key ] }}"
+    },
+    "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "ebdfb41c-8443-4216-b0c3-7c23dc1fa897",
+   "name": "Log Unknown Instance SUPERCHAT",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -272,
+    384
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Log Webhook SUPERCHAT').item.json.id ] }}"
+    },
+    "query": "UPDATE webhook_logs\nSET status = 'ignored', error_message = 'unknown_or_disabled_channel'\nWHERE id = $1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "6763b72f-ea7e-40a5-8757-d90d8880bc6c",
+   "name": "Respond Unknown Instance SUPERCHAT",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -48,
+    384
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "4ea5bf70-4820-407f-a9b9-6e3e65f7a648",
+   "name": "Find SuperChat Contact",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "retryOnFail": false,
+   "position": [
+    848,
+    368
+   ],
+   "parameters": {
+    "method": "GET",
+    "url": "={{ 'https://api.superchat.com/v1.0/contacts?channel_id=' + $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-API-KEY",
+       "value": "={{ $('Merge Channel Secret SUPERCHAT').item.json.superchat_api_key || '' }}"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "2e6b7951-a14a-457f-956d-c7ce488162ce",
+   "name": "Set Send Payload SUPERCHAT",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    608,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const payload = $('Prepare SUPERCHAT Reply').item.json;\nconst channelId = $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id;\nconst contactResults = $('Find SuperChat Contact').item.json.results || [];\nconst target = $('Parse SUPERCHAT Message').item.json.channel_patient_id;\n\nlet contactId = null;\nfor (const c of contactResults) {\n  for (const h of (c.handles || [])) {\n    if (h.value === target) { contactId = c.id; break; }\n  }\n  if (contactId) break;\n}\n\n// Fallback: SuperChat replies are only possible when a contact with a matching\n// channel handle exists (created after the user's first inbound message).\n// Without such a contact we cannot send a reply; record the best effort.\nif (!contactId) {\n  contactId = (contactResults[0] || {}).id || null;\n}\n\nreturn [{ json: { ...payload, superchat_contact_id: contactId, superchat_reply_possible: !!contactId } }];"
+   }
+  },
+  {
+   "id": "2b2219d5-bfd0-4d12-8f1c-c59871e3f846",
+   "name": "Build K2 Signed Core Envelope",
+   "notesInFlow": true,
+   "notes": "Creates an HMAC over the exact internal core envelope using the encrypted channel secret; never emits the secret.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    388,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const src = $('Merge Conversation Data SUPERCHAT').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'messenger',\n  channel_provider: 'superchat',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    messenger_user_id: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    superchat_channel_id: src.superchat_channel_id || null,\n    superchat_conversation_id: src.superchat_conversation_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+   }
+  },
+  {
+   "id": "2fd73ac3-c983-4f2e-ba31-40f0aca4cde5",
+   "name": "Compute K2 HMAC Signature",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    498,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+    },
+    "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Webhook Receive SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Verify SUPERCHAT Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify SUPERCHAT Signature": {
+   "main": [
+    [
+     {
+      "node": "Signature Valid? SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Signature Valid? SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Parse SUPERCHAT Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Invalid Signature SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse SUPERCHAT Message": {
+   "main": [
+    [
+     {
+      "node": "Log Webhook SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Webhook SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Check Not Duplicate SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Not Duplicate SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Is Real Message? SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond Duplicate SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Real Message? SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Is SUPERCHAT Channel?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ignore - Status Update SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is SUPERCHAT Channel?": {
+   "main": [
+    [
+     {
+      "node": "Lookup Clinic ID SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Wrong Channel SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lookup Clinic ID SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Check Clinic Found SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Clinic Found SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Merge Clinic With Message SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Log Unknown Instance SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Unknown Instance SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Respond Unknown Instance SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Clinic With Message SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Get Channel Secret SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Channel Secret SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Merge Channel Secret SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Channel Secret SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Find Or Create Patient SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Or Create Patient SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Merge Patient Data SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Patient Data SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Get Or Create Conversation SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Or Create Conversation SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Merge Conversation Data SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Conversation Data SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Respond OK SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Respond OK SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Build K2 Signed Core Envelope",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Core Engine SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "IF Core Engine Handoff Suppressed (SUPERCHAT)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Core Engine Handoff Suppressed (SUPERCHAT)": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare SUPERCHAT Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare SUPERCHAT Reply": {
+   "main": [
+    [
+     {
+      "node": "Find SuperChat Contact",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send SUPERCHAT Reply": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Reject - Invalid Signature SUPERCHAT": {},
+  "Respond Duplicate SUPERCHAT": {},
+  "Ignore - Status Update SUPERCHAT": {},
+  "Reject - Wrong Channel SUPERCHAT": {},
+  "Mark Webhook Processed SUPERCHAT": {},
+  "Respond Unknown Instance SUPERCHAT": {},
+  "Find SuperChat Contact": {
+   "main": [
+    [
+     {
+      "node": "Set Send Payload SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Set Send Payload SUPERCHAT": {
+   "main": [
+    [
+     {
+      "node": "Send SUPERCHAT Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build K2 Signed Core Envelope": {
+   "main": [
+    [
+     {
+      "node": "Compute K2 HMAC Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute K2 HMAC Signature": {
+   "main": [
+    [
+     {
+      "node": "Call Core Engine SUPERCHAT",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "zp5I9U2JNN5Sn4hH",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:11.431Z",
+   "updatedAt": "2026-09-22T19:25:11.431Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "0d2a676d-c370-4374-acf3-58e45df41e3d",
+  "workflowId": "zp5I9U2JNN5Sn4hH",
+  "nodes": [
+   {
+    "id": "9ec9b2f8-c16f-4fb3-a800-fba2b263714c",
+    "name": "Webhook Receive SUPERCHAT",
+    "webhookId": "f9dfabb4-2eb5-49e6-babd-62de3f3944a3",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -2736,
+     80
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "superchat-messenger-webhook",
+     "responseMode": "responseNode",
+     "options": {
+      "rawBody": true
+     }
+    }
+   },
+   {
+    "id": "919b9eaf-09fb-4094-81c7-1219e8202e9d",
+    "name": "Verify SUPERCHAT Signature",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -2464,
+     80
+    ],
+    "parameters": {
+     "jsCode": "// Superchat webhooks لا تبعث توقيع HMAC — نتحقق فقط من صحة البنية\n// (event message_inbound موجود وmessage فيه content)\n// الحماية الحقيقية: Superchat هو اللي بيعرف الـ webhook URL (secret endpoint)\n\nconst body = $json.body || {};\nconst event = body.event || '';\nconst msg = body.message || {};\n\nconst valid = (event === 'message_inbound' || event === '' ) &&\n              (typeof body === 'object');\n\nreturn [{ json: { signature_valid: valid, body: body } }];"
+    }
+   },
+   {
+    "id": "ca4b8804-d9f6-469d-a67c-435f858e9d77",
+    "name": "Signature Valid? SUPERCHAT",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -2256,
+     80
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "8dfa44e8-cf49-459f-91d0-008b73df8363",
+        "leftValue": "={{ $json.signature_valid }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "cf674b80-7069-4687-a6d8-a1d103ed597c",
+    "name": "Reject - Invalid Signature SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -2256,
+     368
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+     "options": {
+      "responseCode": 401
+     }
+    }
+   },
+   {
+    "id": "2377d864-4c17-4266-98e1-5699e7ac711f",
+    "name": "Parse SUPERCHAT Message",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1968,
+     64
+    ],
+    "parameters": {
+     "jsCode": "// Superchat inbound webhook payload (direct from SuperChat):\n// {\"id\":\"pe_...\",\"event\":\"message_inbound\",\n//  \"message\":{\"id\":\"ms_...\",\"status\":\"received\",\"content\":{\"body\":\"Hello!\",\"type\":\"text\"},\n//    \"direction\":\"inbound\",\"to\":{\"channel_id\":\"mc_...\"},\"from\":{\"id\":\"ct_...\",\"identifier\":\"+20...\"},\n//    \"conversation_id\":\"cv_...\"}}\n// Also accepts router-passed body (same structure) or\n// router-extracted format (message_text / channel_patient_id on top level).\n\nconst body = $json.body || {};\n\nconst event = body.event || '';\n\nif (event !== 'message_inbound') {\n  return [{ json: { is_status_update: true, event: event, raw_body: body } }];\n}\n\nconst msg = body.message || {};\nconst content = msg.content || {};\nconst from = msg.from || {};\nconst to = msg.to || {};\n\nconst channelPatientId = from.identifier || from.id || null;\nconst messageText = content.body || null;\nconst messageType = content.type || 'text';\nconst messageId = msg.id || null;\nconst channelId = to.channel_id || null;\nconst conversationId = msg.conversation_id || null;\n\nconst channelType = 'messenger';\n\nconst idempotencyKey = messageId ? `superchat_fb_${messageId}` : null;\n\nif (!channelPatientId || !messageText) {\n  return [{ json: { is_status_update: true, raw_body: body } }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId),\n    patient_name: from.name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: 'messenger',\n    superchat_channel_id: channelId,\n    superchat_conversation_id: conversationId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+    }
+   },
+   {
+    "id": "8538d876-e209-432f-8392-3d21c35d0581",
+    "name": "Log Webhook SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -1712,
+     64
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+     },
+     "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('superchat', $1, $2::jsonb, 'pending', now(), 'superchat_fb_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "e3235448-74a3-4256-9b0a-83c28d16a4b1",
+    "name": "Check Not Duplicate SUPERCHAT",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1456,
+     64
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "586a5416-2b62-4338-81a7-6f23c539cebc",
+        "leftValue": "={{ $json.is_new }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "347f9b54-f064-4c60-8669-89af71197772",
+    "name": "Respond Duplicate SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1504,
+     448
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "DUPLICATE_IGNORED",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "9b91e472-0852-4d20-b210-4843234a803c",
+    "name": "Is Real Message? SUPERCHAT",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1168,
+     48
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      },
+      "conditions": [
+       {
+        "id": "2bdc45d0-1f6f-4a97-a7b0-208fbc2cb658",
+        "leftValue": "={{ $('Parse SUPERCHAT Message').item.json.is_status_update }}",
+        "rightValue": false,
+        "operator": {
+         "type": "boolean",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "d1282e2e-df37-4d1c-a981-14407ba74e2a",
+    "name": "Ignore - Status Update SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1232,
+     464
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "d65a0420-523d-4d6c-9a44-daf58cd165f7",
+    "name": "Is SUPERCHAT Channel?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -848,
+     32
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "30c42f9e-16b7-4dac-9b73-ad373bd8511e",
+        "leftValue": "={{ $('Parse SUPERCHAT Message').item.json.channel_code }}",
+        "rightValue": "messenger",
+        "operator": {
+         "type": "string",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "7f52e193-5437-4bc0-a536-36d1c4c656a4",
+    "name": "Reject - Wrong Channel SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -944,
+     464
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+     "options": {
+      "responseCode": 400
+     }
+    }
+   },
+   {
+    "id": "36a342ed-469b-4e03-8f0f-ca5157c26ee7",
+    "name": "Lookup Clinic ID SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -480,
+     16
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Parse SUPERCHAT Message').item.json.superchat_channel_id ] }}"
+     },
+     "query": "SELECT (array_agg(c.id))[1] AS clinic_id,\n       (array_agg(ch.id))[1] AS channel_id,\n       COUNT(*)::int AS match_count\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'superchat'\n  AND ch.type = 'messenger'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.config->>'superchat_channel_id' = $1\nGROUP BY ch.config->>'superchat_channel_id'\nHAVING COUNT(*) = 1\nLIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "b394427a-d8d4-40a7-98a2-5768910266bc",
+    "name": "Check Clinic Found SUPERCHAT",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -240,
+     16
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "0ecabc6e-9eaa-4dc6-a636-5b380852c699",
+        "leftValue": "={{ $json.clinic_id }}",
+        "rightValue": "",
+        "operator": {
+         "type": "string",
+         "operation": "notEmpty",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "23a517d8-ce5f-4d98-bed0-c4f20e15b272",
+    "name": "Merge Clinic With Message SUPERCHAT",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const message = $('Parse SUPERCHAT Message').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "f963f1a2-72f4-42e3-9045-d4171942490d",
+    "name": "Get Channel Secret SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     80,
+     160
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.channel_id ] }}"
+     },
+     "query": "SELECT COALESCE(cs.provider, c.provider) AS provider, cs.api_token AS api_token, cs.signing_secret AS signing_secret, cs.tenant_identifier AS tenant_identifier\nFROM channels c\nLEFT JOIN get_channel_secret_db(c.id) cs ON true\nWHERE c.id = $1::uuid"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "47f4f1db-6be3-487f-b4f8-37f2fedd1980",
+    "name": "Merge Channel Secret SUPERCHAT",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     288,
+     160
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message SUPERCHAT').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    superchat_api_key: secretResult.api_token || null,\n    channel_signing_secret: secretResult.signing_secret || null,\n    superchat_channel_id: original.superchat_channel_id || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "32b6a6af-2792-462b-90d5-1764b6e7129a",
+    "name": "Find Or Create Patient SUPERCHAT",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     224,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $('Merge Channel Secret SUPERCHAT').item.json.clinic_id,\n  p_phone: $('Merge Channel Secret SUPERCHAT').item.json.channel_patient_id,\n  p_channel_type: 'messenger',\n  p_channel_patient_id: $('Merge Channel Secret SUPERCHAT').item.json.channel_patient_id,\n  p_full_name: $('Merge Channel Secret SUPERCHAT').item.json.patient_name\n}) }}",
+     "options": {
+      "timeout": 10000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpCustomAuth"
+    },
+    "credentials": {
+     "httpCustomAuth": {
+      "id": "p2J79GLR4o6Yonjo",
+      "name": "Custom Auth account"
+     }
+    }
+   },
+   {
+    "id": "de1a0d17-cad1-4b9f-ac7d-b7a37d3437c8",
+    "name": "Merge Patient Data SUPERCHAT",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     432,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message SUPERCHAT').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+    }
+   },
+   {
+    "id": "f72793cc-c771-4572-a16f-982738f65980",
+    "name": "Get Or Create Conversation SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "position": [
+     688,
+     0
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $(\"Merge Patient Data SUPERCHAT\").item.json.clinic_id, $(\"Merge Patient Data SUPERCHAT\").item.json.patient_id, $(\"Merge Patient Data SUPERCHAT\").item.json.channel_id, $(\"Merge Patient Data SUPERCHAT\").item.json.channel_patient_id ] }}"
+     },
+     "query": "SELECT get_or_create_channel_conversation($1::uuid, $2::uuid, $3::uuid, $4);"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "22b30a44-3b3f-4731-8b5b-9d9719f0f16d",
+    "name": "Merge Conversation Data SUPERCHAT",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     336,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Patient Data SUPERCHAT').item.json;\nconst convResult = $input.item.json;\n\n// Response shape from Postgres RPC call:\n// { \"get_or_create_channel_conversation\": { conversation_id, is_new, channel_id, channel_type, channel_conversation_id, status } }\nlet raw = convResult;\nif (raw && raw.get_or_create_channel_conversation) {\n  raw = raw.get_or_create_channel_conversation;\n}\n\nlet conversationId = null;\nlet channelId = null;\nif (raw && typeof raw === 'object') {\n  conversationId = raw.conversation_id || (raw.result && raw.result.conversation_id) || null;\n  channelId = raw.channel_id || (raw.result && raw.result.channel_id) || null;\n}\n\nif (!conversationId) {\n  throw new Error('Failed to get conversation_id from RPC response: ' + JSON.stringify(convResult).slice(0, 200));\n}\n\nreturn [{\n  json: {\n    ...original,\n    conversation_id: conversationId,\n    channel_id: channelId,\n    conversation_is_new: raw.is_new === true\n  }\n}];"
+    }
+   },
+   {
+    "id": "e3f27d8f-f2f0-49fb-abab-6f50d6301cce",
+    "name": "Respond OK SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1488,
+     400
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "f4aad08a-75d6-43df-b9b3-71f8f791704c",
+    "name": "Call Core Engine SUPERCHAT",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     608,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "X-K2-Signature",
+        "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+     "options": {
+      "timeout": 180000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth"
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "SO91NTrTgX172Ew9",
+      "name": "K2 Internal Core Engine Auth"
+     }
+    }
+   },
+   {
+    "id": "28b1e6dd-400a-43f9-8aa5-ef517067d64e",
+    "name": "IF Core Engine Handoff Suppressed (SUPERCHAT)",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     848,
+     368
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "40192769-d658-4933-b850-9d6577cf8f0c",
+        "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+        "operator": {
+         "operation": "true",
+         "singleValue": true,
+         "type": "boolean"
+        },
+        "rightValue": true
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "cfb12547-8b96-4f22-9af7-a3e86331bded",
+    "name": "Prepare SUPERCHAT Reply",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     864,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse SUPERCHAT Message').item.json.channel_patient_id || null;\n    } catch (e) { console.log('Could not get from Parse'); }\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+    }
+   },
+   {
+    "id": "2589cae4-891e-4fc2-bcdd-32e0b0fbfb86",
+    "name": "Send SUPERCHAT Reply",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1088,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://api.superchat.com/v1.0/messages",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "X-API-KEY",
+        "value": "={{ $('Merge Channel Secret SUPERCHAT').item.json.superchat_api_key || '' }}"
+       },
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({\n  to: [{ identifier: $('Set Send Payload SUPERCHAT').item.json.superchat_contact_id }],\n  from: { channel_id: $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id },\n  content: { type: \"text\", body: $('Set Send Payload SUPERCHAT').item.json.thikaa_message }\n}) }}",
+     "options": {
+      "timeout": 15000
+     }
+    }
+   },
+   {
+    "id": "5c16611c-6f11-45c9-bf38-8db951dd0dc5",
+    "name": "Mark Webhook Processed SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1264,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Merge Conversation Data SUPERCHAT').item.json.clinic_id, $('Merge Conversation Data SUPERCHAT').item.json.channel_id, $('Log Webhook SUPERCHAT').item.json.id, $('Parse SUPERCHAT Message').item.json.idempotency_key ] }}"
+     },
+     "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "ebdfb41c-8443-4216-b0c3-7c23dc1fa897",
+    "name": "Log Unknown Instance SUPERCHAT",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -272,
+     384
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Log Webhook SUPERCHAT').item.json.id ] }}"
+     },
+     "query": "UPDATE webhook_logs\nSET status = 'ignored', error_message = 'unknown_or_disabled_channel'\nWHERE id = $1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "6763b72f-ea7e-40a5-8757-d90d8880bc6c",
+    "name": "Respond Unknown Instance SUPERCHAT",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -48,
+     384
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "4ea5bf70-4820-407f-a9b9-6e3e65f7a648",
+    "name": "Find SuperChat Contact",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "retryOnFail": false,
+    "position": [
+     848,
+     368
+    ],
+    "parameters": {
+     "method": "GET",
+     "url": "={{ 'https://api.superchat.com/v1.0/contacts?channel_id=' + $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "X-API-KEY",
+        "value": "={{ $('Merge Channel Secret SUPERCHAT').item.json.superchat_api_key || '' }}"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "2e6b7951-a14a-457f-956d-c7ce488162ce",
+    "name": "Set Send Payload SUPERCHAT",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     608,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const payload = $('Prepare SUPERCHAT Reply').item.json;\nconst channelId = $('Merge Channel Secret SUPERCHAT').item.json.superchat_channel_id;\nconst contactResults = $('Find SuperChat Contact').item.json.results || [];\nconst target = $('Parse SUPERCHAT Message').item.json.channel_patient_id;\n\nlet contactId = null;\nfor (const c of contactResults) {\n  for (const h of (c.handles || [])) {\n    if (h.value === target) { contactId = c.id; break; }\n  }\n  if (contactId) break;\n}\n\n// Fallback: SuperChat replies are only possible when a contact with a matching\n// channel handle exists (created after the user's first inbound message).\n// Without such a contact we cannot send a reply; record the best effort.\nif (!contactId) {\n  contactId = (contactResults[0] || {}).id || null;\n}\n\nreturn [{ json: { ...payload, superchat_contact_id: contactId, superchat_reply_possible: !!contactId } }];"
+    }
+   },
+   {
+    "id": "2b2219d5-bfd0-4d12-8f1c-c59871e3f846",
+    "name": "Build K2 Signed Core Envelope",
+    "notesInFlow": true,
+    "notes": "Creates an HMAC over the exact internal core envelope using the encrypted channel secret; never emits the secret.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     388,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const src = $('Merge Conversation Data SUPERCHAT').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'messenger',\n  channel_provider: 'superchat',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    messenger_user_id: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    superchat_channel_id: src.superchat_channel_id || null,\n    superchat_conversation_id: src.superchat_conversation_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+    }
+   },
+   {
+    "id": "2fd73ac3-c983-4f2e-ba31-40f0aca4cde5",
+    "name": "Compute K2 HMAC Signature",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     498,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+     },
+     "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Webhook Receive SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Verify SUPERCHAT Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Verify SUPERCHAT Signature": {
+    "main": [
+     [
+      {
+       "node": "Signature Valid? SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Signature Valid? SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Parse SUPERCHAT Message",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Invalid Signature SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse SUPERCHAT Message": {
+    "main": [
+     [
+      {
+       "node": "Log Webhook SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Webhook SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Check Not Duplicate SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Not Duplicate SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Is Real Message? SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Respond Duplicate SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Real Message? SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Is SUPERCHAT Channel?",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Ignore - Status Update SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is SUPERCHAT Channel?": {
+    "main": [
+     [
+      {
+       "node": "Lookup Clinic ID SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Wrong Channel SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Lookup Clinic ID SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Check Clinic Found SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Clinic Found SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Merge Clinic With Message SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Log Unknown Instance SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Unknown Instance SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Respond Unknown Instance SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Clinic With Message SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Get Channel Secret SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Channel Secret SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Merge Channel Secret SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Channel Secret SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Find Or Create Patient SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find Or Create Patient SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Merge Patient Data SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Patient Data SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Get Or Create Conversation SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Or Create Conversation SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Merge Conversation Data SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Conversation Data SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Respond OK SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Respond OK SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Build K2 Signed Core Envelope",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Call Core Engine SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "IF Core Engine Handoff Suppressed (SUPERCHAT)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF Core Engine Handoff Suppressed (SUPERCHAT)": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare SUPERCHAT Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare SUPERCHAT Reply": {
+    "main": [
+     [
+      {
+       "node": "Find SuperChat Contact",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send SUPERCHAT Reply": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Reject - Invalid Signature SUPERCHAT": {},
+   "Respond Duplicate SUPERCHAT": {},
+   "Ignore - Status Update SUPERCHAT": {},
+   "Reject - Wrong Channel SUPERCHAT": {},
+   "Mark Webhook Processed SUPERCHAT": {},
+   "Respond Unknown Instance SUPERCHAT": {},
+   "Find SuperChat Contact": {
+    "main": [
+     [
+      {
+       "node": "Set Send Payload SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Set Send Payload SUPERCHAT": {
+    "main": [
+     [
+      {
+       "node": "Send SUPERCHAT Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build K2 Signed Core Envelope": {
+    "main": [
+     [
+      {
+       "node": "Compute K2 HMAC Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute K2 HMAC Signature": {
+    "main": [
+     [
+      {
+       "node": "Call Core Engine SUPERCHAT",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:34.351Z",
+  "updatedAt": "2026-09-22T20:13:34.351Z",
+  "workflowPublishHistory": [
+   {
+    "id": 88,
+    "workflowId": "zp5I9U2JNN5Sn4hH",
+    "versionId": "0d2a676d-c370-4374-acf3-58e45df41e3d",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:34.393Z"
+   }
+  ]
+ }
+}

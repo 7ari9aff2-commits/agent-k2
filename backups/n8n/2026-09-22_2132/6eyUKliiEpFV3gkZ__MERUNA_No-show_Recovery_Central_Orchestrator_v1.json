@@ -1,0 +1,299 @@
+{
+ "id": "6eyUKliiEpFV3gkZ",
+ "name": "MERUNA / No-show & Recovery / Central Orchestrator v1",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:10.461Z",
+ "updatedAt": "2026-09-22T20:12:53.907Z",
+ "isArchived": false,
+ "versionId": "9a092d1d-3295-43c2-891c-4ac3820358e2",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "74af44aa-6181-4118-9f35-42ca003cb4c0",
+   "name": "Every 5 Minutes",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.3,
+   "position": [
+    240,
+    300
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 5
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "67621daf-a282-483e-8046-25f6ccb4b34d",
+   "name": "01 Detect and Confirm Real No Shows",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    520,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH candidates AS (\n  SELECT appointment_id\n  FROM public.find_no_show_candidates(100)\n), confirmed AS (\n  SELECT c.appointment_id, public.core_confirm_no_show(\n    c.appointment_id,\n    'n8n:no-show-orchestrator:' || c.appointment_id::text,\n    'no-show-orchestrator:confirm:' || c.appointment_id::text\n  ) AS result\n  FROM candidates c\n)\nSELECT\n  (SELECT COUNT(*) FROM candidates)::integer AS candidates_found,\n  COUNT(*) FILTER (WHERE result->>'success' = 'true')::integer AS confirmed_count,\n  COUNT(*) FILTER (WHERE result->>'code' = 'ALREADY_CONFIRMED')::integer AS already_confirmed_count\nFROM confirmed;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "19980df8-988e-48ea-838b-03be82c86a69",
+   "name": "02 Create Cases from Real Appointments",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    800,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH events AS (\n  SELECT de.entity_id, de.id, de.clinic_id, de.correlation_id\n  FROM public.domain_events de\n  JOIN public.appointments a\n    ON a.id = de.entity_id\n   AND a.clinic_id = de.clinic_id\n   AND a.deleted_at IS NULL\n   AND a.appointment_status = 'no_show'\n  WHERE de.event_type = 'appointment.no_show_confirmed'\n    AND de.entity_type = 'appointment'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM public.no_show_cases c\n      WHERE c.appointment_id = de.entity_id\n        AND c.clinic_id = de.clinic_id\n    )\n  ORDER BY de.created_at ASC\n  LIMIT 100\n), created AS (\n  SELECT e.entity_id, public.create_recovery_case(\n    e.entity_id,\n    e.id,\n    COALESCE(e.correlation_id, 'n8n:no-show-orchestrator:case:' || e.entity_id::text),\n    'no-show-orchestrator:case:' || e.entity_id::text\n  ) AS result\n  FROM events e\n)\nSELECT\n  (SELECT COUNT(*) FROM events)::integer AS eligible_events,\n  COUNT(*) FILTER (WHERE result->>'success' = 'true')::integer AS cases_created_or_replayed,\n  COUNT(*) FILTER (WHERE result->>'code' = 'CASE_ALREADY_EXISTS')::integer AS cases_replayed\nFROM created;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "2ba915d2-b1a7-40b3-87c2-d6d7e7f78c6a",
+   "name": "03 Classify and Evaluate Open Cases",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    1080,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH open_cases AS MATERIALIZED (\n  SELECT id\n  FROM public.no_show_cases\n  WHERE case_status IN ('CONFIRMED', 'ELIGIBLE')\n  ORDER BY updated_at ASC\n  LIMIT 100\n), classified AS MATERIALIZED (\n  SELECT o.id, public.classify_no_show(o.id) AS classification_result\n  FROM open_cases o\n), evaluated AS (\n  SELECT c.id, c.classification_result, public.evaluate_no_show_policy(c.id) AS policy_result\n  FROM classified c\n)\nSELECT\n  (SELECT COUNT(*) FROM open_cases)::integer AS open_cases_found,\n  COUNT(*) FILTER (WHERE classification_result->>'success' = 'true')::integer AS classified_count,\n  COUNT(*) FILTER (WHERE policy_result->>'success' = 'true')::integer AS policy_evaluated_count\nFROM evaluated;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "d396ee04-c649-4ba0-8732-4e5325bacbcb",
+   "name": "04 Claim Recovery and Follow Up Attempts",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    1360,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH outreach AS (\n  SELECT public.claim_no_show_recovery_attempt(\n    c.id, 'OUTREACH', NULL,\n    'n8n:no-show-orchestrator:outreach:' || c.id::text,\n    'no-show-orchestrator:outreach:' || c.id::text || ':' || (c.current_attempt_number + 1)::text\n  ) AS result\n  FROM public.no_show_cases c\n  JOIN public.no_show_runtime_config r ON r.clinic_id = c.clinic_id\n  WHERE r.outreach_mode = 'LIVE'\n    AND c.created_at >= r.launch_watermark\n    AND c.case_status = 'ELIGIBLE'\n    AND c.recovery_eligibility = 'ELIGIBLE'\n    AND (c.recovery_deadline IS NULL OR c.recovery_deadline > now())\n    AND c.current_attempt_number < c.max_attempts\n    AND NOT EXISTS (SELECT 1 FROM public.no_show_recovery_attempts a WHERE a.case_id = c.id AND a.status IN ('PENDING','REQUESTED','IN_PROGRESS'))\n  ORDER BY c.last_activity_at ASC\n  LIMIT 100\n), followups AS (\n  SELECT public.claim_no_show_recovery_attempt(\n    c.id, 'FOLLOW_UP', NULL,\n    'n8n:no-show-orchestrator:followup:' || c.id::text,\n    'no-show-orchestrator:followup:' || c.id::text || ':' || (c.current_attempt_number + 1)::text\n  ) AS result\n  FROM public.no_show_cases c\n  JOIN public.no_show_runtime_config r ON r.clinic_id = c.clinic_id\n  WHERE r.outreach_mode = 'LIVE'\n    AND c.created_at >= r.launch_watermark\n    AND c.case_status = 'RECOVERY_ACTIVE'\n    AND c.recovery_eligibility = 'ELIGIBLE'\n    AND (c.recovery_deadline IS NULL OR c.recovery_deadline > now())\n    AND c.current_attempt_number < c.max_attempts\n    AND EXISTS (SELECT 1 FROM public.no_show_recovery_attempts a WHERE a.case_id = c.id AND a.status = 'NO_RESPONSE')\n    AND NOT EXISTS (SELECT 1 FROM public.no_show_recovery_attempts a WHERE a.case_id = c.id AND a.status IN ('PENDING','REQUESTED','IN_PROGRESS'))\n  ORDER BY c.last_activity_at ASC\n  LIMIT 100\n)\nSELECT\n  (SELECT COUNT(*) FROM outreach)::integer AS outreach_candidates,\n  (SELECT COUNT(*) FROM followups)::integer AS followup_candidates,\n  (SELECT COUNT(*) FROM outreach WHERE result->>'success' = 'true')::integer AS outreach_claimed,\n  (SELECT COUNT(*) FROM followups WHERE result->>'success' = 'true')::integer AS followups_claimed;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "0790d0c6-5d1a-4bd7-952d-2cd2c264592e",
+   "name": "05 Request Recovery Notifications",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    1640,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH candidates AS (\n  SELECT a.id AS attempt_id, a.channel_category, a.conversation_id, a.correlation_id\n  FROM public.no_show_recovery_attempts a\n  JOIN public.no_show_cases c ON c.id = a.case_id AND c.clinic_id = a.clinic_id\n  JOIN public.no_show_runtime_config r ON r.clinic_id = a.clinic_id\n  WHERE r.outreach_mode = 'LIVE'\n    AND a.status IN ('REQUESTED','IN_PROGRESS')\n    AND a.notification_domain_event_id IS NULL\n    AND a.requested_at >= r.launch_watermark\n    AND c.recovery_eligibility = 'ELIGIBLE'\n    AND c.case_status IN ('RECOVERY_ACTIVE','HANDOFF_ACTIVE')\n  ORDER BY a.requested_at ASC, a.id ASC\n  LIMIT 50\n), requested AS (\n  SELECT public.request_no_show_recovery_notification(\n    c.attempt_id, c.channel_category, c.conversation_id, c.correlation_id\n  ) AS result\n  FROM candidates c\n)\nSELECT\n  (SELECT COUNT(*) FROM candidates)::integer AS notification_candidates,\n  COUNT(*) FILTER (WHERE result->>'success' = 'true')::integer AS notifications_requested,\n  COUNT(*) FILTER (WHERE result->>'code' = 'OUTREACH_DISABLED')::integer AS outreach_disabled_count\nFROM requested;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "0773256f-4304-4431-8514-f76199a06586",
+   "name": "06 Complete Delivered Recovery Outcomes",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    1920,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH candidates AS (\n  SELECT\n    a.id AS attempt_id,\n    CASE\n      WHEN j.status = 'DEAD_LETTER' THEN 'FAILED'\n      WHEN j.status = 'SENT'\n       AND now() >= COALESCE(a.started_at, a.requested_at, a.created_at)\n         + make_interval(mins => GREATEST(\n             CASE WHEN c.policy_snapshot->>'attempt_spacing_minutes' ~ '^[0-9]+$'\n               THEN (c.policy_snapshot->>'attempt_spacing_minutes')::integer\n               ELSE 1440 END,\n             1))\n      THEN 'NO_RESPONSE'\n      ELSE NULL\n    END AS target_status,\n    CASE WHEN j.status = 'DEAD_LETTER' THEN 'DELIVERY_FAILED' ELSE 'NO_RESPONSE_TIMEOUT' END AS response_type,\n    CASE WHEN j.status = 'DEAD_LETTER' THEN COALESCE(j.last_error_category, 'NOTIFICATION_DEAD_LETTER') ELSE NULL END AS failure_code\n  FROM public.no_show_recovery_attempts a\n  JOIN public.no_show_cases c ON c.id = a.case_id AND c.clinic_id = a.clinic_id\n  JOIN public.notification_jobs j ON j.id = a.notification_job_id AND j.clinic_id = a.clinic_id\n  WHERE a.status IN ('REQUESTED','IN_PROGRESS')\n    AND j.status IN ('SENT','DEAD_LETTER')\n), completed AS (\n  SELECT public.complete_no_show_recovery_attempt(\n    c.attempt_id, c.target_status, c.response_type, c.failure_code\n  ) AS result\n  FROM candidates c\n  WHERE c.target_status IS NOT NULL\n)\nSELECT\n  (SELECT COUNT(*) FROM candidates WHERE target_status IS NOT NULL)::integer AS outcome_candidates,\n  COUNT(*) FILTER (WHERE result->>'success' = 'true')::integer AS outcomes_completed\nFROM completed;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "eaa0dd33-beb5-4543-90f9-87f872664bb0",
+   "name": "07 Reconcile Stale No Show Cases",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "executeOnce": true,
+   "position": [
+    2200,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH stale_cases AS (\n  SELECT id\n  FROM public.no_show_cases\n  WHERE case_status IN ('CONFIRMED','ELIGIBLE','RECOVERY_ACTIVE','HANDOFF_ACTIVE')\n    AND (updated_at < now() - interval '10 minutes' OR recovery_deadline < now())\n  ORDER BY updated_at ASC\n  LIMIT 100\n), reconciled AS (\n  SELECT public.reconcile_no_show_case(s.id) AS result\n  FROM stale_cases s\n)\nSELECT\n  (SELECT COUNT(*) FROM stale_cases)::integer AS stale_cases_found,\n  COUNT(*) FILTER (WHERE result->>'success' = 'true')::integer AS reconciled_count\nFROM reconciled;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Every 5 Minutes": {
+   "main": [
+    [
+     {
+      "node": "01 Detect and Confirm Real No Shows",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "01 Detect and Confirm Real No Shows": {
+   "main": [
+    [
+     {
+      "node": "02 Create Cases from Real Appointments",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "02 Create Cases from Real Appointments": {
+   "main": [
+    [
+     {
+      "node": "03 Classify and Evaluate Open Cases",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "03 Classify and Evaluate Open Cases": {
+   "main": [
+    [
+     {
+      "node": "04 Claim Recovery and Follow Up Attempts",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "04 Claim Recovery and Follow Up Attempts": {
+   "main": [
+    [
+     {
+      "node": "05 Request Recovery Notifications",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "05 Request Recovery Notifications": {
+   "main": [
+    [
+     {
+      "node": "06 Complete Delivered Recovery Outcomes",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "06 Complete Delivered Recovery Outcomes": {
+   "main": [
+    [
+     {
+      "node": "07 Reconcile Stale No Show Cases",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "6eyUKliiEpFV3gkZ",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:10.461Z",
+   "updatedAt": "2026-09-22T19:25:10.461Z"
+  }
+ ],
+ "activeVersion": null
+}

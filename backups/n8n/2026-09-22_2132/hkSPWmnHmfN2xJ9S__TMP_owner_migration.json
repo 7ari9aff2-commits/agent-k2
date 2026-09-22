@@ -1,0 +1,126 @@
+{
+ "id": "hkSPWmnHmfN2xJ9S",
+ "name": "TMP owner migration",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:54:54.736Z",
+ "updatedAt": "2026-09-22T19:55:42.366Z",
+ "isArchived": true,
+ "versionId": "de42fce1-9c3c-4064-a8ae-8cc34df18ba1",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "wh",
+   "name": "Webhook",
+   "webhookId": "tmp-owner-migration",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "tmp-owner-migration",
+    "responseMode": "lastNode",
+    "options": {}
+   }
+  },
+  {
+   "id": "delete-member",
+   "name": "Delete Member",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "DELETE FROM \"user\" WHERE email = '7amedadel@gmail.com' AND role != 'global:owner';",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "q8Rer8rtii3Xs6P9",
+     "name": "tmp-n8n-db"
+    }
+   }
+  },
+  {
+   "id": "update-owner-email",
+   "name": "Update Owner Email",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "UPDATE \"user\" SET email = '7amedadel@gmail.com' WHERE email = 'admin@meruna.systems';",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "q8Rer8rtii3Xs6P9",
+     "name": "tmp-n8n-db"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Webhook": {
+   "main": [
+    [
+     {
+      "node": "Delete Member",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Delete Member": {
+   "main": [
+    [
+     {
+      "node": "Update Owner Email",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {},
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "hkSPWmnHmfN2xJ9S",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:54:54.736Z",
+   "updatedAt": "2026-09-22T19:54:54.736Z"
+  }
+ ],
+ "activeVersion": null
+}

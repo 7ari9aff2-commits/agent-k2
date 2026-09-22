@@ -1,0 +1,343 @@
+{
+ "id": "nnHhyIr2VIj96rvx",
+ "name": "K2 TG Typing Loop",
+ "description": null,
+ "active": true,
+ "activeVersionId": "2625657d-6bb8-4c39-ba79-3c78fb3d9352",
+ "createdAt": "2026-09-22T21:20:44.909Z",
+ "updatedAt": "2026-09-22T21:20:44.909Z",
+ "isArchived": false,
+ "versionId": "2625657d-6bb8-4c39-ba79-3c78fb3d9352",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "trig",
+   "name": "Execute Workflow Trigger",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "inputSource": "passthrough"
+   }
+  },
+  {
+   "id": "pings",
+   "name": "Ping Count",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    200,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "// bounded typing loop: 8 pings x ~4s ≈ 32s max\nreturn Array.from({length: 8}, (_, i) => ({ json: { ping: i } }));"
+   }
+  },
+  {
+   "id": "loop",
+   "name": "Loop",
+   "type": "n8n-nodes-base.splitInBatches",
+   "typeVersion": 3,
+   "position": [
+    400,
+    0
+   ],
+   "parameters": {
+    "batchSize": 1,
+    "options": {}
+   }
+  },
+  {
+   "id": "tg",
+   "name": "Typing",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    600,
+    0
+   ],
+   "parameters": {
+    "resource": "message",
+    "operation": "sendChatAction",
+    "chatId": "={{ $('Execute Workflow Trigger').first().json.telegram_chat_id }}",
+    "action": "typing",
+    "additionalFields": {}
+   },
+   "credentials": {
+    "telegramApi": {
+     "id": "6cODVuKVshihKizq",
+     "name": "Telegram account"
+    }
+   },
+   "webhookId": "27124c3e-63ce-47ea-85a3-7f3f53c7262d"
+  },
+  {
+   "id": "wait",
+   "name": "Wait 4s",
+   "webhookId": "tg-typing-loop-wait",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    800,
+    0
+   ],
+   "parameters": {
+    "amount": 4
+   }
+  }
+ ],
+ "connections": {
+  "Execute Workflow Trigger": {
+   "main": [
+    [
+     {
+      "node": "Ping Count",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ping Count": {
+   "main": [
+    [
+     {
+      "node": "Loop",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Loop": {
+   "main": [
+    [],
+    [
+     {
+      "node": "Typing",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Typing": {
+   "main": [
+    [
+     {
+      "node": "Wait 4s",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Wait 4s": {
+   "main": [
+    [
+     {
+      "node": "Loop",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "nnHhyIr2VIj96rvx",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T21:20:44.909Z",
+   "updatedAt": "2026-09-22T21:20:44.909Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "2625657d-6bb8-4c39-ba79-3c78fb3d9352",
+  "workflowId": "nnHhyIr2VIj96rvx",
+  "nodes": [
+   {
+    "id": "trig",
+    "name": "Execute Workflow Trigger",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "inputSource": "passthrough"
+    }
+   },
+   {
+    "id": "pings",
+    "name": "Ping Count",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     200,
+     0
+    ],
+    "parameters": {
+     "mode": "runOnceForAllItems",
+     "jsCode": "// bounded typing loop: 8 pings x ~4s ≈ 32s max\nreturn Array.from({length: 8}, (_, i) => ({ json: { ping: i } }));"
+    }
+   },
+   {
+    "id": "loop",
+    "name": "Loop",
+    "type": "n8n-nodes-base.splitInBatches",
+    "typeVersion": 3,
+    "position": [
+     400,
+     0
+    ],
+    "parameters": {
+     "batchSize": 1,
+     "options": {}
+    }
+   },
+   {
+    "id": "tg",
+    "name": "Typing",
+    "type": "n8n-nodes-base.telegram",
+    "typeVersion": 1.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     600,
+     0
+    ],
+    "parameters": {
+     "resource": "message",
+     "operation": "sendChatAction",
+     "chatId": "={{ $('Execute Workflow Trigger').first().json.telegram_chat_id }}",
+     "action": "typing",
+     "additionalFields": {}
+    },
+    "credentials": {
+     "telegramApi": {
+      "id": "6cODVuKVshihKizq",
+      "name": "Telegram account"
+     }
+    },
+    "webhookId": "27124c3e-63ce-47ea-85a3-7f3f53c7262d"
+   },
+   {
+    "id": "wait",
+    "name": "Wait 4s",
+    "webhookId": "tg-typing-loop-wait",
+    "type": "n8n-nodes-base.wait",
+    "typeVersion": 1.1,
+    "position": [
+     800,
+     0
+    ],
+    "parameters": {
+     "amount": 4
+    }
+   }
+  ],
+  "connections": {
+   "Execute Workflow Trigger": {
+    "main": [
+     [
+      {
+       "node": "Ping Count",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Ping Count": {
+    "main": [
+     [
+      {
+       "node": "Loop",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Loop": {
+    "main": [
+     [],
+     [
+      {
+       "node": "Typing",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Typing": {
+    "main": [
+     [
+      {
+       "node": "Wait 4s",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Wait 4s": {
+    "main": [
+     [
+      {
+       "node": "Loop",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T21:20:44.909Z",
+  "updatedAt": "2026-09-22T21:20:44.909Z",
+  "workflowPublishHistory": [
+   {
+    "id": 94,
+    "workflowId": "nnHhyIr2VIj96rvx",
+    "versionId": "2625657d-6bb8-4c39-ba79-3c78fb3d9352",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T21:20:45.767Z"
+   }
+  ]
+ }
+}

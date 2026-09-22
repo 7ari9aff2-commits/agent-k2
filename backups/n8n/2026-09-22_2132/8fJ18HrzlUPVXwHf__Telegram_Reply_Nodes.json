@@ -1,0 +1,1552 @@
+{
+ "id": "8fJ18HrzlUPVXwHf",
+ "name": "Telegram Reply Nodes",
+ "description": null,
+ "active": true,
+ "activeVersionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+ "createdAt": "2026-09-22T19:25:16.395Z",
+ "updatedAt": "2026-09-22T21:21:10.431Z",
+ "isArchived": false,
+ "versionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+ "versionCounter": 4,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "d945f450-c0c3-4a35-8114-de84b2401f46",
+   "name": "Parse Telegram Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1968,
+    64
+   ],
+   "parameters": {
+    "jsCode": "const incoming = $json ?? {};\nconst update = incoming.body && typeof incoming.body === 'object' ? incoming.body : incoming;\nconst isEdit = Boolean(update.edited_message || update.edited_channel_post);\nconst message = update.channel_post || update.edited_channel_post || update.message || update.edited_message || null;\nif (!message) {\n  return [{ json: { ...incoming, is_status_update: true, event: 'telegram.update', raw_body: update, raw_body_string: JSON.stringify(update), raw_headers: incoming.headers || {} } }];\n}\nconst chat = message.chat || {};\nconst sender = message.from || message.sender_chat || {};\n// Bot-originated messages and edits never re-enter the agent loop: bot replies\n// would self-trigger, and each edit re-fires a full agent turn (duplicate replies).\nif (sender.is_bot === true || isEdit) {\n  return [{ json: { ...incoming, is_status_update: true, event: isEdit ? 'message.edited_ignored' : 'bot_message_ignored', raw_body: update, raw_body_string: JSON.stringify(update), raw_headers: incoming.headers || {} } }];\n}\nconst messageText = message.text ?? message.caption ?? '';\nconst chatId = chat.id ?? null;\nconst senderId = sender.id ?? chatId;\nconst messageId = message.message_id ?? null;\nconst sourceEventId = update.update_id ?? messageId;\nconst idempotencyKey = chatId !== null && sourceEventId !== null ? `telegram:${chatId}:${sourceEventId}` : null;\nconst receivedAt = message.date ? new Date(Number(message.date) * 1000).toISOString() : new Date().toISOString();\nconst messageType = message.photo || message.video || message.document || message.audio ? 'media' : 'text';\nreturn [{ json: {\n  ...incoming,\n  is_status_update: false,\n  event: 'message.received',\n  raw_body: update,\n  raw_body_string: JSON.stringify(update),\n  raw_headers: incoming.headers || {},\n  channel_type: 'telegram',\n  channel_id: chatId,\n  channel_username: chat.username ? `@${chat.username}` : null,\n  telegram_chat_id: chatId,\n  telegram_message_id: messageId,\n  channel_patient_id: senderId,\n  patient_name: null,\n  message_text: messageText,\n  text: messageText,\n  message_type: messageType,\n  message_id: messageId,\n  source_event_id: sourceEventId,\n  idempotency_key: idempotencyKey,\n  received_at: receivedAt,\n  conversation_id: chatId,\n  attachments: [],\n  data: { from: senderId, text: messageText, channel_id: chatId, message_id: messageId, message_type: messageType }\n} }];"
+   }
+  },
+  {
+   "id": "63837237-746b-41ad-b570-de943740ca8f",
+   "name": "Lookup Telegram Clinic",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    -480,
+    16
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT ch.clinic_id, ch.id AS channel_id\nFROM public.channels ch\nWHERE ch.type = 'telegram'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.deleted_at IS NULL\n  AND NOT COALESCE((ch.config->>'test_only')::boolean, false)\nORDER BY CASE WHEN ch.config->>'telegram_chat_id' = $1 THEN 0 ELSE 1 END, ch.created_at\nLIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [ String($('Parse Telegram Message').item.json.telegram_chat_id) ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "b67b47e5-b1d9-4941-b629-f267a797f8c3",
+   "name": "Merge Clinic With Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const message = $('Parse Telegram Message').item.json;\nconst clinicLookup = $json || {};\nreturn [{ json: {\n  ...message,\n  clinic_id: clinicLookup.clinic_id || null,\n  channel_id: clinicLookup.channel_id || null,\n  channel_type: 'telegram',\n} }];"
+   }
+  },
+  {
+   "id": "b750906f-187e-4ed6-ac66-a3e7046abdc5",
+   "name": "Merge Patient Data",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    432,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message').item.json;\nconst patientResult = $json || {};\nlet patientId = null;\nif (Array.isArray(patientResult.data) && patientResult.data.length > 0) patientId = patientResult.data[0].patient_id;\nelse if (patientResult.patient_id) patientId = patientResult.patient_id;\nelse if (Array.isArray(patientResult) && patientResult[0]?.patient_id) patientId = patientResult[0].patient_id;\nif (!patientId) throw new Error('Failed to get patient_id from Supabase RPC response');\nreturn [{ json: { ...original, patient_id: patientId } }];"
+   }
+  },
+  {
+   "id": "72a859fa-97e2-4746-b022-aaa8199dfa78",
+   "name": "Merge Conversation Data",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    336,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Patient Data').item.json;\nconst convResult = $input.item.json || {};\nconst rpcRow = convResult?.get_or_create_channel_conversation ?? convResult?.result?.get_or_create_channel_conversation ?? null;\nlet conversationId = null;\nlet channelId = null;\nif (rpcRow && typeof rpcRow === 'object' && !Array.isArray(rpcRow)) {\n  conversationId = rpcRow.conversation_id ?? null;\n  channelId = rpcRow.channel_id ?? null;\n} else if (convResult.conversation_id) {\n  conversationId = convResult.conversation_id;\n  channelId = convResult.channel_id ?? null;\n} else if (convResult.result?.conversation_id) {\n  conversationId = convResult.result.conversation_id;\n  channelId = convResult.result.channel_id ?? null;\n} else if (Array.isArray(convResult.data) && convResult.data.length) {\n  const row = convResult.data[0] || {};\n  const nested = row.get_or_create_channel_conversation ?? row.result ?? row;\n  conversationId = nested.conversation_id ?? null;\n  channelId = nested.channel_id ?? null;\n}\nif (!conversationId) throw new Error('Failed to get conversation_id from Supabase RPC response');\nreturn [{ json: { ...original, conversation_id: conversationId, channel_id: channelId || original.channel_id || null } }];"
+   }
+  },
+  {
+   "id": "08a64228-4147-4b6d-a331-332eff382885",
+   "name": "Call Core Engine",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    608,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      },
+      {
+       "name": "X-K2-Signature",
+       "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "32b63a2f-2cfd-4f8c-b5ad-ec0213d279c4",
+   "name": "Prepare Telegram Reply",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    864,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const data = $input.item.json || {};\nlet replyText = data.reply_text || data.final_reply || data.canonical_reply || data.response || data.message || data.answer || data.body || data.output || data.result || null;\nif (replyText && typeof replyText === 'object') replyText = replyText.text || replyText.content || JSON.stringify(replyText);\nif (!replyText || String(replyText).trim() === '') replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى.';\nreplyText = String(replyText).slice(0, 4000);\nlet original = {};\ntry { original = $('Parse Telegram Message').item.json || {}; } catch (_) {}\nconst chatId = data.telegram_chat_id ?? data.channel_patient_id ?? data.chat_id ?? original.telegram_chat_id ?? original.channel_patient_id ?? original.channel_id ?? null;\nif (chatId === null || chatId === undefined || String(chatId).trim() === '') throw new Error('Missing Telegram chat ID for reply');\nreturn [{ json: { ...original, ...data, telegram_chat_id: chatId, telegram_reply: replyText } }];"
+   }
+  },
+  {
+   "id": "c02784b2-c1c3-4279-abc3-9b6fdb1dab08",
+   "name": "Log Telegram Webhook",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    -1712,
+    64
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('telegram', $1, $2::jsonb, 'pending', now(), 'telegram_native_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;",
+    "options": {
+     "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "b7460145-8832-4d13-9a60-38cd2895039d",
+   "name": "Check Telegram Duplicate",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1456,
+    64
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "7b2c3d4e-0022-4a11-9b22-555555555555",
+       "leftValue": "={{ $json.is_new }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "bf839817-5c33-4cc7-82fa-4195f0cd272a",
+   "name": "Is Real Telegram Message",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1168,
+    48
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "d4e5f6a7-3333-4a11-9e33-999999999999",
+       "leftValue": "={{ $('Parse Telegram Message').item.json.is_status_update }}",
+       "operator": {
+        "operation": "equals",
+        "type": "boolean"
+       },
+       "rightValue": false
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "e5bf738c-2662-480d-9375-33db2a3a9490",
+   "name": "Check Clinic Found",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -240,
+    16
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "c1a2b3c4-0001-4a11-9a11-111111111111",
+       "leftValue": "={{ $json.clinic_id }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "bc471ccc-04b8-4624-8c21-26dcf1f9a499",
+   "name": "Log Unknown Telegram Channel",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -272,
+    384
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "UPDATE webhook_logs SET status = 'ignored', error_message = 'unknown_or_disabled_telegram_channel' WHERE id = $1;",
+    "options": {
+     "queryReplacement": "={{ [ $('Log Telegram Webhook').item.json.id ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "a02fd166-bcb6-4f0d-8754-e51411e716a7",
+   "name": "Mark Telegram Webhook Processed",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1264,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;",
+    "options": {
+     "queryReplacement": "={{ [ $('Merge Conversation Data').item.json.clinic_id, $('Merge Conversation Data').item.json.channel_id, $('Log Telegram Webhook').item.json.id, $('Parse Telegram Message').item.json.idempotency_key ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "core-engine-handoff-suppressed-jRmu86AuZKJTk2ur",
+   "name": "IF Core Engine Handoff Suppressed",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    848,
+    368
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "core-engine-handoff-suppressed-telegram-20260819",
+       "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+       "operator": {
+        "operation": "true",
+        "singleValue": true,
+        "type": "boolean"
+       },
+       "rightValue": true
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "telegram-secure-patient-postgres",
+   "name": "Find Or Create Telegram Patient",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    32,
+    272
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.find_or_create_patient($1::uuid, $2::text, 'telegram'::text, $2::text, $3::text) LIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [ String($json.clinic_id), String($json.channel_patient_id), null ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "telegram-secure-conversation-postgres",
+   "name": "Get Or Create Telegram Conversation",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    -16,
+    -416
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.get_or_create_channel_conversation($1::uuid, $2::uuid, $3::uuid, $4::text) LIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [ String($json.clinic_id), String($json.patient_id), String($json.channel_id), String($json.channel_patient_id) ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "080bcf63-82f2-4803-a5e8-55ee66517807",
+   "name": "Build K2 Signed Core Envelope",
+   "notesInFlow": true,
+   "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    400,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const src = $('Merge Conversation Data').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'telegram',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.source_event_id || src.idempotency_key || null,\n  metadata: {\n    telegram_chat_id: src.telegram_chat_id || null,\n    message_type: src.message_type || 'text'\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+   }
+  },
+  {
+   "id": "7434087e-415f-4087-98b0-3a046454b6b4",
+   "name": "Send Telegram Message",
+   "webhookId": "6f967647-56ff-42f6-9091-75f14160e90b",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1088,
+    368
+   ],
+   "parameters": {
+    "chatId": "={{ $json.telegram_chat_id || $json.channel_patient_id }}",
+    "text": "={{ $json.telegram_reply || $json.reply_text || '' }}",
+    "additionalFields": {
+     "appendAttribution": false,
+     "parse_mode": "HTML"
+    }
+   },
+   "credentials": {
+    "telegramApi": {
+     "id": "6cODVuKVshihKizq",
+     "name": "Telegram account"
+    }
+   }
+  },
+  {
+   "id": "53fa81fd-f83f-47eb-b3a0-0b6e0a282cb7",
+   "name": "Telegram Trigger",
+   "webhookId": "169cfb47-f1f5-4a04-a7b0-b911f22da7a7",
+   "type": "n8n-nodes-base.telegramTrigger",
+   "typeVersion": 1.5,
+   "position": [
+    -2736,
+    80
+   ],
+   "parameters": {
+    "updates": [
+     "message",
+     "channel_post",
+     "edited_channel_post",
+     "edited_message"
+    ],
+    "additionalFields": {}
+   },
+   "credentials": {
+    "telegramApi": {
+     "id": "6cODVuKVshihKizq",
+     "name": "Telegram account"
+    }
+   }
+  },
+  {
+   "id": "d1f5b6c7-1234-4e89-9abc-123456789001",
+   "name": "Compute K2 HMAC Signature",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    320,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "typing-fire",
+   "name": "Show Typing Indicator",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "position": [
+    1750,
+    0
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "value": "nnHhyIr2VIj96rvx",
+     "mode": "list"
+    },
+    "options": {
+     "waitForSubWorkflow": false
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Parse Telegram Message": {
+   "main": [
+    [
+     {
+      "node": "Log Telegram Webhook",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lookup Telegram Clinic": {
+   "main": [
+    [
+     {
+      "node": "Check Clinic Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Telegram Webhook": {
+   "main": [
+    [
+     {
+      "node": "Check Telegram Duplicate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Telegram Duplicate": {
+   "main": [
+    [
+     {
+      "node": "Is Real Telegram Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    []
+   ]
+  },
+  "Check Clinic Found": {
+   "main": [
+    [
+     {
+      "node": "Merge Clinic With Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Log Unknown Telegram Channel",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Or Create Telegram Patient": {
+   "main": [
+    [
+     {
+      "node": "Merge Patient Data",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Or Create Telegram Conversation": {
+   "main": [
+    [
+     {
+      "node": "Merge Conversation Data",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Patient Data": {
+   "main": [
+    [
+     {
+      "node": "Get Or Create Telegram Conversation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Core Engine": {
+   "main": [
+    [
+     {
+      "node": "IF Core Engine Handoff Suppressed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Core Engine Handoff Suppressed": {
+   "main": [
+    [
+     {
+      "node": "Mark Telegram Webhook Processed",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare Telegram Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Telegram Reply": {
+   "main": [
+    [
+     {
+      "node": "Send Telegram Message",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send Telegram Message": {
+   "main": [
+    [
+     {
+      "node": "Mark Telegram Webhook Processed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Telegram Trigger": {
+   "main": [
+    [
+     {
+      "node": "Parse Telegram Message",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Real Telegram Message": {
+   "main": [
+    [
+     {
+      "node": "Lookup Telegram Clinic",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Clinic With Message": {
+   "main": [
+    [
+     {
+      "node": "Find Or Create Telegram Patient",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Conversation Data": {
+   "main": [
+    [
+     {
+      "node": "Show Typing Indicator",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build K2 Signed Core Envelope": {
+   "main": [
+    [
+     {
+      "node": "Compute K2 HMAC Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute K2 HMAC Signature": {
+   "main": [
+    [
+     {
+      "node": "Call Core Engine",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Show Typing Indicator": {
+   "main": [
+    [
+     {
+      "node": "Build K2 Signed Core Envelope",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "8fJ18HrzlUPVXwHf",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:16.395Z",
+   "updatedAt": "2026-09-22T19:25:16.395Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+  "workflowId": "8fJ18HrzlUPVXwHf",
+  "nodes": [
+   {
+    "id": "d945f450-c0c3-4a35-8114-de84b2401f46",
+    "name": "Parse Telegram Message",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1968,
+     64
+    ],
+    "parameters": {
+     "jsCode": "const incoming = $json ?? {};\nconst update = incoming.body && typeof incoming.body === 'object' ? incoming.body : incoming;\nconst isEdit = Boolean(update.edited_message || update.edited_channel_post);\nconst message = update.channel_post || update.edited_channel_post || update.message || update.edited_message || null;\nif (!message) {\n  return [{ json: { ...incoming, is_status_update: true, event: 'telegram.update', raw_body: update, raw_body_string: JSON.stringify(update), raw_headers: incoming.headers || {} } }];\n}\nconst chat = message.chat || {};\nconst sender = message.from || message.sender_chat || {};\n// Bot-originated messages and edits never re-enter the agent loop: bot replies\n// would self-trigger, and each edit re-fires a full agent turn (duplicate replies).\nif (sender.is_bot === true || isEdit) {\n  return [{ json: { ...incoming, is_status_update: true, event: isEdit ? 'message.edited_ignored' : 'bot_message_ignored', raw_body: update, raw_body_string: JSON.stringify(update), raw_headers: incoming.headers || {} } }];\n}\nconst messageText = message.text ?? message.caption ?? '';\nconst chatId = chat.id ?? null;\nconst senderId = sender.id ?? chatId;\nconst messageId = message.message_id ?? null;\nconst sourceEventId = update.update_id ?? messageId;\nconst idempotencyKey = chatId !== null && sourceEventId !== null ? `telegram:${chatId}:${sourceEventId}` : null;\nconst receivedAt = message.date ? new Date(Number(message.date) * 1000).toISOString() : new Date().toISOString();\nconst messageType = message.photo || message.video || message.document || message.audio ? 'media' : 'text';\nreturn [{ json: {\n  ...incoming,\n  is_status_update: false,\n  event: 'message.received',\n  raw_body: update,\n  raw_body_string: JSON.stringify(update),\n  raw_headers: incoming.headers || {},\n  channel_type: 'telegram',\n  channel_id: chatId,\n  channel_username: chat.username ? `@${chat.username}` : null,\n  telegram_chat_id: chatId,\n  telegram_message_id: messageId,\n  channel_patient_id: senderId,\n  patient_name: null,\n  message_text: messageText,\n  text: messageText,\n  message_type: messageType,\n  message_id: messageId,\n  source_event_id: sourceEventId,\n  idempotency_key: idempotencyKey,\n  received_at: receivedAt,\n  conversation_id: chatId,\n  attachments: [],\n  data: { from: senderId, text: messageText, channel_id: chatId, message_id: messageId, message_type: messageType }\n} }];"
+    }
+   },
+   {
+    "id": "63837237-746b-41ad-b570-de943740ca8f",
+    "name": "Lookup Telegram Clinic",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     -480,
+     16
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT ch.clinic_id, ch.id AS channel_id\nFROM public.channels ch\nWHERE ch.type = 'telegram'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.deleted_at IS NULL\n  AND NOT COALESCE((ch.config->>'test_only')::boolean, false)\nORDER BY CASE WHEN ch.config->>'telegram_chat_id' = $1 THEN 0 ELSE 1 END, ch.created_at\nLIMIT 1;",
+     "options": {
+      "queryReplacement": "={{ [ String($('Parse Telegram Message').item.json.telegram_chat_id) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "b67b47e5-b1d9-4941-b629-f267a797f8c3",
+    "name": "Merge Clinic With Message",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const message = $('Parse Telegram Message').item.json;\nconst clinicLookup = $json || {};\nreturn [{ json: {\n  ...message,\n  clinic_id: clinicLookup.clinic_id || null,\n  channel_id: clinicLookup.channel_id || null,\n  channel_type: 'telegram',\n} }];"
+    }
+   },
+   {
+    "id": "b750906f-187e-4ed6-ac66-a3e7046abdc5",
+    "name": "Merge Patient Data",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     432,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message').item.json;\nconst patientResult = $json || {};\nlet patientId = null;\nif (Array.isArray(patientResult.data) && patientResult.data.length > 0) patientId = patientResult.data[0].patient_id;\nelse if (patientResult.patient_id) patientId = patientResult.patient_id;\nelse if (Array.isArray(patientResult) && patientResult[0]?.patient_id) patientId = patientResult[0].patient_id;\nif (!patientId) throw new Error('Failed to get patient_id from Supabase RPC response');\nreturn [{ json: { ...original, patient_id: patientId } }];"
+    }
+   },
+   {
+    "id": "72a859fa-97e2-4746-b022-aaa8199dfa78",
+    "name": "Merge Conversation Data",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     336,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Patient Data').item.json;\nconst convResult = $input.item.json || {};\nconst rpcRow = convResult?.get_or_create_channel_conversation ?? convResult?.result?.get_or_create_channel_conversation ?? null;\nlet conversationId = null;\nlet channelId = null;\nif (rpcRow && typeof rpcRow === 'object' && !Array.isArray(rpcRow)) {\n  conversationId = rpcRow.conversation_id ?? null;\n  channelId = rpcRow.channel_id ?? null;\n} else if (convResult.conversation_id) {\n  conversationId = convResult.conversation_id;\n  channelId = convResult.channel_id ?? null;\n} else if (convResult.result?.conversation_id) {\n  conversationId = convResult.result.conversation_id;\n  channelId = convResult.result.channel_id ?? null;\n} else if (Array.isArray(convResult.data) && convResult.data.length) {\n  const row = convResult.data[0] || {};\n  const nested = row.get_or_create_channel_conversation ?? row.result ?? row;\n  conversationId = nested.conversation_id ?? null;\n  channelId = nested.channel_id ?? null;\n}\nif (!conversationId) throw new Error('Failed to get conversation_id from Supabase RPC response');\nreturn [{ json: { ...original, conversation_id: conversationId, channel_id: channelId || original.channel_id || null } }];"
+    }
+   },
+   {
+    "id": "08a64228-4147-4b6d-a331-332eff382885",
+    "name": "Call Core Engine",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     608,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "X-K2-Signature",
+        "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+     "options": {
+      "timeout": 180000
+     }
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "SO91NTrTgX172Ew9",
+      "name": "K2 Internal Core Engine Auth"
+     }
+    }
+   },
+   {
+    "id": "32b63a2f-2cfd-4f8c-b5ad-ec0213d279c4",
+    "name": "Prepare Telegram Reply",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     864,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const data = $input.item.json || {};\nlet replyText = data.reply_text || data.final_reply || data.canonical_reply || data.response || data.message || data.answer || data.body || data.output || data.result || null;\nif (replyText && typeof replyText === 'object') replyText = replyText.text || replyText.content || JSON.stringify(replyText);\nif (!replyText || String(replyText).trim() === '') replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى.';\nreplyText = String(replyText).slice(0, 4000);\nlet original = {};\ntry { original = $('Parse Telegram Message').item.json || {}; } catch (_) {}\nconst chatId = data.telegram_chat_id ?? data.channel_patient_id ?? data.chat_id ?? original.telegram_chat_id ?? original.channel_patient_id ?? original.channel_id ?? null;\nif (chatId === null || chatId === undefined || String(chatId).trim() === '') throw new Error('Missing Telegram chat ID for reply');\nreturn [{ json: { ...original, ...data, telegram_chat_id: chatId, telegram_reply: replyText } }];"
+    }
+   },
+   {
+    "id": "c02784b2-c1c3-4279-abc3-9b6fdb1dab08",
+    "name": "Log Telegram Webhook",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     -1712,
+     64
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('telegram', $1, $2::jsonb, 'pending', now(), 'telegram_native_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;",
+     "options": {
+      "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "b7460145-8832-4d13-9a60-38cd2895039d",
+    "name": "Check Telegram Duplicate",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1456,
+     64
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "7b2c3d4e-0022-4a11-9b22-555555555555",
+        "leftValue": "={{ $json.is_new }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "bf839817-5c33-4cc7-82fa-4195f0cd272a",
+    "name": "Is Real Telegram Message",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1168,
+     48
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "d4e5f6a7-3333-4a11-9e33-999999999999",
+        "leftValue": "={{ $('Parse Telegram Message').item.json.is_status_update }}",
+        "operator": {
+         "operation": "equals",
+         "type": "boolean"
+        },
+        "rightValue": false
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "e5bf738c-2662-480d-9375-33db2a3a9490",
+    "name": "Check Clinic Found",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -240,
+     16
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "c1a2b3c4-0001-4a11-9a11-111111111111",
+        "leftValue": "={{ $json.clinic_id }}",
+        "rightValue": "",
+        "operator": {
+         "type": "string",
+         "operation": "notEmpty",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "bc471ccc-04b8-4624-8c21-26dcf1f9a499",
+    "name": "Log Unknown Telegram Channel",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -272,
+     384
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE webhook_logs SET status = 'ignored', error_message = 'unknown_or_disabled_telegram_channel' WHERE id = $1;",
+     "options": {
+      "queryReplacement": "={{ [ $('Log Telegram Webhook').item.json.id ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "a02fd166-bcb6-4f0d-8754-e51411e716a7",
+    "name": "Mark Telegram Webhook Processed",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     1264,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;",
+     "options": {
+      "queryReplacement": "={{ [ $('Merge Conversation Data').item.json.clinic_id, $('Merge Conversation Data').item.json.channel_id, $('Log Telegram Webhook').item.json.id, $('Parse Telegram Message').item.json.idempotency_key ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "core-engine-handoff-suppressed-jRmu86AuZKJTk2ur",
+    "name": "IF Core Engine Handoff Suppressed",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     848,
+     368
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "core-engine-handoff-suppressed-telegram-20260819",
+        "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+        "operator": {
+         "operation": "true",
+         "singleValue": true,
+         "type": "boolean"
+        },
+        "rightValue": true
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "telegram-secure-patient-postgres",
+    "name": "Find Or Create Telegram Patient",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     32,
+     272
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT * FROM public.find_or_create_patient($1::uuid, $2::text, 'telegram'::text, $2::text, $3::text) LIMIT 1;",
+     "options": {
+      "queryReplacement": "={{ [ String($json.clinic_id), String($json.channel_patient_id), null ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "telegram-secure-conversation-postgres",
+    "name": "Get Or Create Telegram Conversation",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     -16,
+     -416
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT * FROM public.get_or_create_channel_conversation($1::uuid, $2::uuid, $3::uuid, $4::text) LIMIT 1;",
+     "options": {
+      "queryReplacement": "={{ [ String($json.clinic_id), String($json.patient_id), String($json.channel_id), String($json.channel_patient_id) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "080bcf63-82f2-4803-a5e8-55ee66517807",
+    "name": "Build K2 Signed Core Envelope",
+    "notesInFlow": true,
+    "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     400,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const src = $('Merge Conversation Data').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'telegram',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.source_event_id || src.idempotency_key || null,\n  metadata: {\n    telegram_chat_id: src.telegram_chat_id || null,\n    message_type: src.message_type || 'text'\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+    }
+   },
+   {
+    "id": "7434087e-415f-4087-98b0-3a046454b6b4",
+    "name": "Send Telegram Message",
+    "webhookId": "6f967647-56ff-42f6-9091-75f14160e90b",
+    "type": "n8n-nodes-base.telegram",
+    "typeVersion": 1.2,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     1088,
+     368
+    ],
+    "parameters": {
+     "chatId": "={{ $json.telegram_chat_id || $json.channel_patient_id }}",
+     "text": "={{ $json.telegram_reply || $json.reply_text || '' }}",
+     "additionalFields": {
+      "appendAttribution": false,
+      "parse_mode": "HTML"
+     }
+    },
+    "credentials": {
+     "telegramApi": {
+      "id": "6cODVuKVshihKizq",
+      "name": "Telegram account"
+     }
+    }
+   },
+   {
+    "id": "53fa81fd-f83f-47eb-b3a0-0b6e0a282cb7",
+    "name": "Telegram Trigger",
+    "webhookId": "169cfb47-f1f5-4a04-a7b0-b911f22da7a7",
+    "type": "n8n-nodes-base.telegramTrigger",
+    "typeVersion": 1.5,
+    "position": [
+     -2736,
+     80
+    ],
+    "parameters": {
+     "updates": [
+      "message",
+      "channel_post",
+      "edited_channel_post",
+      "edited_message"
+     ],
+     "additionalFields": {}
+    },
+    "credentials": {
+     "telegramApi": {
+      "id": "6cODVuKVshihKizq",
+      "name": "Telegram account"
+     }
+    }
+   },
+   {
+    "id": "d1f5b6c7-1234-4e89-9abc-123456789001",
+    "name": "Compute K2 HMAC Signature",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "position": [
+     320,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "typing-fire",
+    "name": "Show Typing Indicator",
+    "type": "n8n-nodes-base.executeWorkflow",
+    "typeVersion": 1.2,
+    "position": [
+     1750,
+     0
+    ],
+    "parameters": {
+     "source": "database",
+     "workflowId": {
+      "__rl": true,
+      "value": "nnHhyIr2VIj96rvx",
+      "mode": "list"
+     },
+     "options": {
+      "waitForSubWorkflow": false
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Parse Telegram Message": {
+    "main": [
+     [
+      {
+       "node": "Log Telegram Webhook",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Lookup Telegram Clinic": {
+    "main": [
+     [
+      {
+       "node": "Check Clinic Found",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Telegram Webhook": {
+    "main": [
+     [
+      {
+       "node": "Check Telegram Duplicate",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Telegram Duplicate": {
+    "main": [
+     [
+      {
+       "node": "Is Real Telegram Message",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     []
+    ]
+   },
+   "Check Clinic Found": {
+    "main": [
+     [
+      {
+       "node": "Merge Clinic With Message",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Log Unknown Telegram Channel",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find Or Create Telegram Patient": {
+    "main": [
+     [
+      {
+       "node": "Merge Patient Data",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Or Create Telegram Conversation": {
+    "main": [
+     [
+      {
+       "node": "Merge Conversation Data",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Patient Data": {
+    "main": [
+     [
+      {
+       "node": "Get Or Create Telegram Conversation",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Call Core Engine": {
+    "main": [
+     [
+      {
+       "node": "IF Core Engine Handoff Suppressed",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF Core Engine Handoff Suppressed": {
+    "main": [
+     [
+      {
+       "node": "Mark Telegram Webhook Processed",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare Telegram Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare Telegram Reply": {
+    "main": [
+     [
+      {
+       "node": "Send Telegram Message",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send Telegram Message": {
+    "main": [
+     [
+      {
+       "node": "Mark Telegram Webhook Processed",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Telegram Trigger": {
+    "main": [
+     [
+      {
+       "node": "Parse Telegram Message",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Real Telegram Message": {
+    "main": [
+     [
+      {
+       "node": "Lookup Telegram Clinic",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Clinic With Message": {
+    "main": [
+     [
+      {
+       "node": "Find Or Create Telegram Patient",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Conversation Data": {
+    "main": [
+     [
+      {
+       "node": "Show Typing Indicator",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build K2 Signed Core Envelope": {
+    "main": [
+     [
+      {
+       "node": "Compute K2 HMAC Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute K2 HMAC Signature": {
+    "main": [
+     [
+      {
+       "node": "Call Core Engine",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Show Typing Indicator": {
+    "main": [
+     [
+      {
+       "node": "Build K2 Signed Core Envelope",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T21:21:10.434Z",
+  "updatedAt": "2026-09-22T21:21:10.434Z",
+  "workflowPublishHistory": [
+   {
+    "id": 96,
+    "workflowId": "8fJ18HrzlUPVXwHf",
+    "versionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T21:21:10.475Z"
+   },
+   {
+    "id": 97,
+    "workflowId": "8fJ18HrzlUPVXwHf",
+    "versionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+    "event": "deactivated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T21:21:11.225Z"
+   },
+   {
+    "id": 98,
+    "workflowId": "8fJ18HrzlUPVXwHf",
+    "versionId": "b0a1e065-7012-4c45-9076-1a8222ee531f",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T21:21:11.225Z"
+   }
+  ]
+ }
+}

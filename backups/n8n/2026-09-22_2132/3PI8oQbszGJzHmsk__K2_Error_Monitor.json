@@ -1,0 +1,226 @@
+{
+ "id": "3PI8oQbszGJzHmsk",
+ "name": "K2 Error Monitor",
+ "description": null,
+ "active": true,
+ "activeVersionId": "63c1b7c3-e6f7-4a0f-a90d-b4868223f9d0",
+ "createdAt": "2026-09-22T19:25:10.811Z",
+ "updatedAt": "2026-09-22T19:29:00.743Z",
+ "isArchived": false,
+ "versionId": "63c1b7c3-e6f7-4a0f-a90d-b4868223f9d0",
+ "versionCounter": 1,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "28212683-b16a-411d-83a8-5d992d4a03c6",
+   "name": "K2 Error Trigger",
+   "type": "n8n-nodes-base.errorTrigger",
+   "typeVersion": 1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "01e17ac7-3d8e-4fad-a65d-4fe428aa6538",
+   "name": "Normalize K2 Failure Event",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    224,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const event = $json || {};\nconst execution = event.execution || {};\nconst workflow = event.workflow || {};\nconst error = event.error || {};\nreturn [{ json: {\n  error_monitor: 'agent_k2',\n  captured_at: new Date().toISOString(),\n  execution_id: execution.id || null,\n  workflow_id: workflow.id || null,\n  workflow_name: workflow.name || 'agent k2',\n  error_message: String(error.message || event.message || 'workflow_failure'),\n  error_name: error.name || null,\n  node_name: error.node?.name || error.nodeName || null,\n  hint: 'Unhandled production failure captured. No appointment mutation is performed here.'\n} }];"
+   }
+  },
+  {
+   "id": "82e51e88-e858-4ef2-820a-723d21fe2f83",
+   "name": "Send Telegram K2 Alert",
+   "webhookId": "fdcfedc5-585a-4e4d-acdf-e696abebd1d6",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "onError": "continueRegularOutput",
+   "position": [
+    720,
+    300
+   ],
+   "parameters": {
+    "resource": "message",
+    "operation": "sendMessage",
+    "chatId": "5032546660",
+    "text": "={{ '🚨 K2 ALERT | ' + ($json.workflow_name || 'unknown') + ' | node: ' + ($json.node_name || '?') + ' | exec: ' + ($json.execution_id || '?') + ' | ' + String($json.error_message || '').slice(0, 350) }}",
+    "additionalFields": {
+     "appendAttribution": false,
+     "disable_web_page_preview": true
+    }
+   },
+   "credentials": {
+    "telegramApi": {
+     "id": "6cODVuKVshihKizq",
+     "name": "Telegram account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "K2 Error Trigger": {
+   "main": [
+    [
+     {
+      "node": "Normalize K2 Failure Event",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Normalize K2 Failure Event": {
+   "main": [
+    [
+     {
+      "node": "Send Telegram K2 Alert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "3PI8oQbszGJzHmsk",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:10.811Z",
+   "updatedAt": "2026-09-22T19:25:10.811Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "63c1b7c3-e6f7-4a0f-a90d-b4868223f9d0",
+  "workflowId": "3PI8oQbszGJzHmsk",
+  "nodes": [
+   {
+    "id": "28212683-b16a-411d-83a8-5d992d4a03c6",
+    "name": "K2 Error Trigger",
+    "type": "n8n-nodes-base.errorTrigger",
+    "typeVersion": 1,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {}
+   },
+   {
+    "id": "01e17ac7-3d8e-4fad-a65d-4fe428aa6538",
+    "name": "Normalize K2 Failure Event",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     224,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const event = $json || {};\nconst execution = event.execution || {};\nconst workflow = event.workflow || {};\nconst error = event.error || {};\nreturn [{ json: {\n  error_monitor: 'agent_k2',\n  captured_at: new Date().toISOString(),\n  execution_id: execution.id || null,\n  workflow_id: workflow.id || null,\n  workflow_name: workflow.name || 'agent k2',\n  error_message: String(error.message || event.message || 'workflow_failure'),\n  error_name: error.name || null,\n  node_name: error.node?.name || error.nodeName || null,\n  hint: 'Unhandled production failure captured. No appointment mutation is performed here.'\n} }];"
+    }
+   },
+   {
+    "id": "82e51e88-e858-4ef2-820a-723d21fe2f83",
+    "name": "Send Telegram K2 Alert",
+    "webhookId": "fdcfedc5-585a-4e4d-acdf-e696abebd1d6",
+    "type": "n8n-nodes-base.telegram",
+    "typeVersion": 1.2,
+    "retryOnFail": true,
+    "maxTries": 3,
+    "waitBetweenTries": 2000,
+    "onError": "continueRegularOutput",
+    "position": [
+     720,
+     300
+    ],
+    "parameters": {
+     "resource": "message",
+     "operation": "sendMessage",
+     "chatId": "5032546660",
+     "text": "={{ '🚨 K2 ALERT | ' + ($json.workflow_name || 'unknown') + ' | node: ' + ($json.node_name || '?') + ' | exec: ' + ($json.execution_id || '?') + ' | ' + String($json.error_message || '').slice(0, 350) }}",
+     "additionalFields": {
+      "appendAttribution": false,
+      "disable_web_page_preview": true
+     }
+    },
+    "credentials": {
+     "telegramApi": {
+      "id": "6cODVuKVshihKizq",
+      "name": "Telegram account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "K2 Error Trigger": {
+    "main": [
+     [
+      {
+       "node": "Normalize K2 Failure Event",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Normalize K2 Failure Event": {
+    "main": [
+     [
+      {
+       "node": "Send Telegram K2 Alert",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T19:25:10.811Z",
+  "updatedAt": "2026-09-22T19:25:10.811Z",
+  "workflowPublishHistory": [
+   {
+    "id": 4,
+    "workflowId": "3PI8oQbszGJzHmsk",
+    "versionId": "63c1b7c3-e6f7-4a0f-a90d-b4868223f9d0",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:42:12.704Z"
+   }
+  ]
+ }
+}

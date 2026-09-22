@@ -1,0 +1,130 @@
+{
+ "id": "AOSwmEzYpHCspBwS",
+ "name": "MERUNA / FINAL / No-show & Recovery / 08 - NS - Recovery Outcome",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:09.524Z",
+ "updatedAt": "2026-09-22T20:13:00.640Z",
+ "isArchived": false,
+ "versionId": "b1934091-8529-48ed-b454-16430e5391ba",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "33366bfa-b735-4287-8ad5-e60ab308d45c",
+   "name": "Recovery outcome webhook",
+   "webhookId": "759e5136-b00d-498a-8816-64976597e891",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    -784,
+    -144
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "meruna/no-show/outcome",
+    "responseMode": "responseNode",
+    "options": {},
+    "authentication": "headerAuth"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "3462df39-b32a-49f7-ad24-4303cab9ea59",
+   "name": "Persist recovery outcome",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -448,
+    -144
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.close_no_show_case(\n  ($json.body.case_id)::uuid,\n  $json.body.outcome::text,\n  $json.body.closure_reason::text\n) AS outcome_result;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "adc058c6-de35-4139-a541-16c76e5ddbff",
+   "name": "Respond with outcome",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.4,
+   "position": [
+    -144,
+    -144
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { success: true, result: $json.outcome_result } }}",
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Recovery outcome webhook": {
+   "main": [
+    [
+     {
+      "node": "Persist recovery outcome",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Persist recovery outcome": {
+   "main": [
+    [
+     {
+      "node": "Respond with outcome",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "AOSwmEzYpHCspBwS",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:09.524Z",
+   "updatedAt": "2026-09-22T19:25:09.524Z"
+  }
+ ],
+ "activeVersion": null
+}

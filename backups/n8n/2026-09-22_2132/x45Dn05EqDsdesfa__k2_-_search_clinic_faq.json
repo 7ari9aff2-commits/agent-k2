@@ -1,0 +1,199 @@
+{
+ "id": "x45Dn05EqDsdesfa",
+ "name": "k2 - search_clinic_faq",
+ "description": null,
+ "active": true,
+ "activeVersionId": "e26499f7-af72-4dc6-857d-5fab310c6c1f",
+ "createdAt": "2026-09-22T19:25:12.654Z",
+ "updatedAt": "2026-09-22T20:13:29.456Z",
+ "isArchived": false,
+ "versionId": "e26499f7-af72-4dc6-857d-5fab310c6c1f",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "f44b280f-7fce-4b35-931b-0e13a63b7742",
+   "name": "When called by K2",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    260,
+    300
+   ],
+   "parameters": {
+    "inputSource": "workflowInputs",
+    "workflowInputs": {
+     "values": [
+      {
+       "name": "clinic_id",
+       "type": "string"
+      },
+      {
+       "name": "question",
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "0dd9f9ce-ef88-4998-8048-513929de17eb",
+   "name": "Search FAQ in knowledge_base",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    600,
+    300
+   ],
+   "parameters": {
+    "resource": "database",
+    "operation": "executeQuery",
+    "query": "WITH input AS (\n  SELECT\n    $1::uuid AS clinic_id,\n    BTRIM(COALESCE($2::text, '')) AS question,\n    regexp_split_to_array(\n      lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n        BTRIM(COALESCE($2::text, '')),\n        '[ًٌٍَُِّْـ]', '', 'g'),\n        '[أإآٱ]', 'ا', 'g'),\n        'ى', 'ي', 'g'),\n        'ة', 'ه', 'g'),\n        '[[:punct:]]+', ' ', 'g')\n      ),\n      '\\s+'\n    ) AS tokens\n), candidates AS (\n  SELECT\n    k.id, k.title, k.content, k.document_name, k.source, k.language, k.chunk_index, k.updated_at,\n    i.clinic_id, i.question, i.tokens,\n    lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n      COALESCE(k.title, '') || ' ' || k.content,\n      '[ًٌٍَُِّْـ]', '', 'g'),\n      '[أإآٱ]', 'ا', 'g'),\n      'ى', 'ي', 'g'),\n      'ة', 'ه', 'g')\n    ) AS searchable_text,\n    lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n      COALESCE(k.title, ''),\n      '[ًٌٍَُِّْـ]', '', 'g'),\n      '[أإآٱ]', 'ا', 'g'),\n      'ى', 'ي', 'g'),\n      'ة', 'ه', 'g')\n    ) AS title_text\n  FROM public.knowledge_base k\n  CROSS JOIN input i\n  WHERE k.clinic_id = i.clinic_id\n    AND k.is_published = true\n    AND k.deleted_at IS NULL\n    AND i.question <> ''\n), ranked AS (\n  SELECT\n    c.*,\n    (\n      SELECT COUNT(*)::int\n      FROM unnest(c.tokens) AS token\n      WHERE char_length(token) >= 3\n        AND token NOT IN ('وش', 'ايش', 'ما', 'ماذا', 'هل', 'من', 'في', 'عن', 'على', 'الى', 'إلى', 'مع', 'عند', 'كيف', 'كم', 'وين', 'أين', 'و', 'اين', 'فين', 'نعم', 'ايوه', 'ايوا', 'ايه', 'اها', 'طيب', 'تمام', 'اوك', 'اوكي', 'خلاص', 'ماشي', 'حاضر', 'اكد', 'اكدي', 'اجل')\n        AND c.searchable_text ILIKE '%' || token || '%'\n    ) AS matched_terms,\n    (\n      SELECT COUNT(*)::int\n      FROM unnest(c.tokens) AS token\n      WHERE char_length(token) >= 3\n        AND token NOT IN ('وش', 'ايش', 'ما', 'ماذا', 'هل', 'من', 'في', 'عن', 'على', 'الى', 'إلى', 'مع', 'عند', 'كيف', 'كم', 'وين', 'أين', 'و', 'اين', 'فين', 'نعم', 'ايوه', 'ايوا', 'ايه', 'اها', 'طيب', 'تمام', 'اوك', 'اوكي', 'خلاص', 'ماشي', 'حاضر', 'اكد', 'اكدي', 'اجل')\n        AND c.title_text ILIKE '%' || token || '%'\n    ) AS title_matches\n  FROM candidates c\n), top_matches AS (\n  SELECT *\n  FROM ranked\n  WHERE (matched_terms >= 2 OR title_matches >= 1)\n  ORDER BY title_matches DESC, matched_terms DESC, chunk_index ASC, updated_at DESC\n  LIMIT 5\n)\nSELECT\n  r.clinic_id,\n  r.question,\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', r.id,\n        'title', r.title,\n        'content', r.content,\n        'document_name', r.document_name,\n        'source', r.source,\n        'language', r.language,\n        'chunk_index', r.chunk_index,\n        'matched_terms', r.matched_terms,\n        'title_matches', r.title_matches\n      )\n      ORDER BY r.title_matches DESC, r.matched_terms DESC, r.chunk_index ASC, r.updated_at DESC\n    ),\n    '[]'::json\n  ) AS results,\n  COUNT(*)::int AS count\nFROM top_matches r\nGROUP BY r.clinic_id, r.question\nUNION ALL\nSELECT $1::uuid, BTRIM(COALESCE($2::text, '')), '[]'::json, 0\nWHERE NOT EXISTS (SELECT 1 FROM ranked WHERE matched_terms >= 2 OR title_matches >= 1);",
+    "options": {
+     "queryReplacement": "={{ [$json.clinic_id, ($json.question || '').toString().trim().slice(0, 500)] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "When called by K2": {
+   "main": [
+    [
+     {
+      "node": "Search FAQ in knowledge_base",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "errorWorkflow": "KmQZ9bXmmP1YEZht",
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "x45Dn05EqDsdesfa",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:12.654Z",
+   "updatedAt": "2026-09-22T19:25:12.654Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "e26499f7-af72-4dc6-857d-5fab310c6c1f",
+  "workflowId": "x45Dn05EqDsdesfa",
+  "nodes": [
+   {
+    "id": "f44b280f-7fce-4b35-931b-0e13a63b7742",
+    "name": "When called by K2",
+    "type": "n8n-nodes-base.executeWorkflowTrigger",
+    "typeVersion": 1.2,
+    "position": [
+     260,
+     300
+    ],
+    "parameters": {
+     "inputSource": "workflowInputs",
+     "workflowInputs": {
+      "values": [
+       {
+        "name": "clinic_id",
+        "type": "string"
+       },
+       {
+        "name": "question",
+        "type": "string"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "id": "0dd9f9ce-ef88-4998-8048-513929de17eb",
+    "name": "Search FAQ in knowledge_base",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     600,
+     300
+    ],
+    "parameters": {
+     "resource": "database",
+     "operation": "executeQuery",
+     "query": "WITH input AS (\n  SELECT\n    $1::uuid AS clinic_id,\n    BTRIM(COALESCE($2::text, '')) AS question,\n    regexp_split_to_array(\n      lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n        BTRIM(COALESCE($2::text, '')),\n        '[ًٌٍَُِّْـ]', '', 'g'),\n        '[أإآٱ]', 'ا', 'g'),\n        'ى', 'ي', 'g'),\n        'ة', 'ه', 'g'),\n        '[[:punct:]]+', ' ', 'g')\n      ),\n      '\\s+'\n    ) AS tokens\n), candidates AS (\n  SELECT\n    k.id, k.title, k.content, k.document_name, k.source, k.language, k.chunk_index, k.updated_at,\n    i.clinic_id, i.question, i.tokens,\n    lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n      COALESCE(k.title, '') || ' ' || k.content,\n      '[ًٌٍَُِّْـ]', '', 'g'),\n      '[أإآٱ]', 'ا', 'g'),\n      'ى', 'ي', 'g'),\n      'ة', 'ه', 'g')\n    ) AS searchable_text,\n    lower(regexp_replace(regexp_replace(regexp_replace(regexp_replace(\n      COALESCE(k.title, ''),\n      '[ًٌٍَُِّْـ]', '', 'g'),\n      '[أإآٱ]', 'ا', 'g'),\n      'ى', 'ي', 'g'),\n      'ة', 'ه', 'g')\n    ) AS title_text\n  FROM public.knowledge_base k\n  CROSS JOIN input i\n  WHERE k.clinic_id = i.clinic_id\n    AND k.is_published = true\n    AND k.deleted_at IS NULL\n    AND i.question <> ''\n), ranked AS (\n  SELECT\n    c.*,\n    (\n      SELECT COUNT(*)::int\n      FROM unnest(c.tokens) AS token\n      WHERE char_length(token) >= 3\n        AND token NOT IN ('وش', 'ايش', 'ما', 'ماذا', 'هل', 'من', 'في', 'عن', 'على', 'الى', 'إلى', 'مع', 'عند', 'كيف', 'كم', 'وين', 'أين', 'و', 'اين', 'فين', 'نعم', 'ايوه', 'ايوا', 'ايه', 'اها', 'طيب', 'تمام', 'اوك', 'اوكي', 'خلاص', 'ماشي', 'حاضر', 'اكد', 'اكدي', 'اجل')\n        AND c.searchable_text ILIKE '%' || token || '%'\n    ) AS matched_terms,\n    (\n      SELECT COUNT(*)::int\n      FROM unnest(c.tokens) AS token\n      WHERE char_length(token) >= 3\n        AND token NOT IN ('وش', 'ايش', 'ما', 'ماذا', 'هل', 'من', 'في', 'عن', 'على', 'الى', 'إلى', 'مع', 'عند', 'كيف', 'كم', 'وين', 'أين', 'و', 'اين', 'فين', 'نعم', 'ايوه', 'ايوا', 'ايه', 'اها', 'طيب', 'تمام', 'اوك', 'اوكي', 'خلاص', 'ماشي', 'حاضر', 'اكد', 'اكدي', 'اجل')\n        AND c.title_text ILIKE '%' || token || '%'\n    ) AS title_matches\n  FROM candidates c\n), top_matches AS (\n  SELECT *\n  FROM ranked\n  WHERE (matched_terms >= 2 OR title_matches >= 1)\n  ORDER BY title_matches DESC, matched_terms DESC, chunk_index ASC, updated_at DESC\n  LIMIT 5\n)\nSELECT\n  r.clinic_id,\n  r.question,\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', r.id,\n        'title', r.title,\n        'content', r.content,\n        'document_name', r.document_name,\n        'source', r.source,\n        'language', r.language,\n        'chunk_index', r.chunk_index,\n        'matched_terms', r.matched_terms,\n        'title_matches', r.title_matches\n      )\n      ORDER BY r.title_matches DESC, r.matched_terms DESC, r.chunk_index ASC, r.updated_at DESC\n    ),\n    '[]'::json\n  ) AS results,\n  COUNT(*)::int AS count\nFROM top_matches r\nGROUP BY r.clinic_id, r.question\nUNION ALL\nSELECT $1::uuid, BTRIM(COALESCE($2::text, '')), '[]'::json, 0\nWHERE NOT EXISTS (SELECT 1 FROM ranked WHERE matched_terms >= 2 OR title_matches >= 1);",
+     "options": {
+      "queryReplacement": "={{ [$json.clinic_id, ($json.question || '').toString().trim().slice(0, 500)] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "When called by K2": {
+    "main": [
+     [
+      {
+       "node": "Search FAQ in knowledge_base",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:29.458Z",
+  "updatedAt": "2026-09-22T20:13:29.458Z",
+  "workflowPublishHistory": [
+   {
+    "id": 82,
+    "workflowId": "x45Dn05EqDsdesfa",
+    "versionId": "e26499f7-af72-4dc6-857d-5fab310c6c1f",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:29.483Z"
+   }
+  ]
+ }
+}

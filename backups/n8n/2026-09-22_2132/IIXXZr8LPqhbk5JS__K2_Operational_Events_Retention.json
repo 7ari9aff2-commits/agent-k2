@@ -1,0 +1,193 @@
+{
+ "id": "IIXXZr8LPqhbk5JS",
+ "name": "K2 Operational Events Retention",
+ "description": null,
+ "active": true,
+ "activeVersionId": "611b2065-b3e8-4b7b-9c51-8a75824ca744",
+ "createdAt": "2026-09-22T19:25:17.527Z",
+ "updatedAt": "2026-09-22T20:13:13.926Z",
+ "isArchived": false,
+ "versionId": "611b2065-b3e8-4b7b-9c51-8a75824ca744",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "15593121-3f9a-4289-b1d7-7bd524aae088",
+   "name": "Daily Retention Trigger",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.3,
+   "position": [
+    240,
+    300
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "days",
+       "daysInterval": 1,
+       "triggerAtHour": 3,
+       "triggerAtMinute": 30
+      }
+     ]
+    },
+    "skipDurableScheduler": false
+   }
+  },
+  {
+   "id": "cc24acd4-eea0-427d-b8b9-b32261a8c72c",
+   "name": "Prune K2 Operational Events",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "position": [
+    520,
+    300
+   ],
+   "parameters": {
+    "resource": "database",
+    "operation": "executeQuery",
+    "query": "WITH deleted AS (DELETE FROM public.k2_operational_events WHERE created_at < now() - interval '90 days' RETURNING id) SELECT count(*)::integer AS deleted_count, now() AS ran_at, 'k2_operational_events_retention'::text AS operation LIMIT 1;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Daily Retention Trigger": {
+   "main": [
+    [
+     {
+      "node": "Prune K2 Operational Events",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": {
+  "node:Daily Retention Trigger": {
+   "recurrenceRules": [
+    null
+   ],
+   "recurrenceRuleSignatures": [
+    null
+   ]
+  }
+ },
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "IIXXZr8LPqhbk5JS",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:17.527Z",
+   "updatedAt": "2026-09-22T19:25:17.527Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "611b2065-b3e8-4b7b-9c51-8a75824ca744",
+  "workflowId": "IIXXZr8LPqhbk5JS",
+  "nodes": [
+   {
+    "id": "15593121-3f9a-4289-b1d7-7bd524aae088",
+    "name": "Daily Retention Trigger",
+    "type": "n8n-nodes-base.scheduleTrigger",
+    "typeVersion": 1.3,
+    "position": [
+     240,
+     300
+    ],
+    "parameters": {
+     "rule": {
+      "interval": [
+       {
+        "field": "days",
+        "daysInterval": 1,
+        "triggerAtHour": 3,
+        "triggerAtMinute": 30
+       }
+      ]
+     },
+     "skipDurableScheduler": false
+    }
+   },
+   {
+    "id": "cc24acd4-eea0-427d-b8b9-b32261a8c72c",
+    "name": "Prune K2 Operational Events",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "position": [
+     520,
+     300
+    ],
+    "parameters": {
+     "resource": "database",
+     "operation": "executeQuery",
+     "query": "WITH deleted AS (DELETE FROM public.k2_operational_events WHERE created_at < now() - interval '90 days' RETURNING id) SELECT count(*)::integer AS deleted_count, now() AS ran_at, 'k2_operational_events_retention'::text AS operation LIMIT 1;",
+     "options": {}
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Daily Retention Trigger": {
+    "main": [
+     [
+      {
+       "node": "Prune K2 Operational Events",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:13.928Z",
+  "updatedAt": "2026-09-22T20:13:13.928Z",
+  "workflowPublishHistory": [
+   {
+    "id": 76,
+    "workflowId": "IIXXZr8LPqhbk5JS",
+    "versionId": "611b2065-b3e8-4b7b-9c51-8a75824ca744",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:13.971Z"
+   }
+  ]
+ }
+}

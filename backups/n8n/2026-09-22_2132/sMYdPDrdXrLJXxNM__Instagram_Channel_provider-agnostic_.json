@@ -1,0 +1,2128 @@
+{
+ "id": "sMYdPDrdXrLJXxNM",
+ "name": "Instagram Channel (provider-agnostic)",
+ "description": null,
+ "active": true,
+ "activeVersionId": "cc4f1356-e79d-41c6-aa22-5b1e88518faa",
+ "createdAt": "2026-09-22T19:25:19.484Z",
+ "updatedAt": "2026-09-22T20:13:24.572Z",
+ "isArchived": false,
+ "versionId": "cc4f1356-e79d-41c6-aa22-5b1e88518faa",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "70fdaca1-7fbf-41f5-9fab-36346492d0e0",
+   "name": "Webhook Receive Instagram",
+   "webhookId": "74666929-5ce7-4ddc-9357-7db67a894595",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -2736,
+    80
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "ig-thikaa-webhook",
+    "responseMode": "responseNode",
+    "options": {
+     "rawBody": true
+    }
+   }
+  },
+  {
+   "id": "8debaefd-73f5-486b-942b-0ed06098e8b0",
+   "name": "Verify Thikaa Signature Instagram",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -2464,
+    80
+   ],
+   "parameters": {
+    "jsCode": "const crypto = require('crypto');\n// Confirmed working header name: x-thikaa-signature\nconst SIGNATURE_HEADER = 'x-thikaa-signature';\n// Instagram-only signing secret\nconst SIGNING_SECRET = 'ab41d1f152cf71f024498874e083d9c6b050c83fe8545aab';\n\nconst headers = $json.headers || {};\nlet receivedSignature =\n  headers[SIGNATURE_HEADER] ||\n  headers[SIGNATURE_HEADER.toLowerCase()] ||\n  headers[SIGNATURE_HEADER.toUpperCase()] ||\n  null;\n\n// ثيكا بتحط بادئة 'sha256=' قبل الـ hash — لازم نشيلها قبل المقارنة\nif (receivedSignature && receivedSignature.startsWith('sha256=')) {\n  receivedSignature = receivedSignature.slice('sha256='.length);\n}\n\nlet rawBodyBuffer;\ntry {\n  rawBodyBuffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  throw new Error('\\u274c Raw body \\u0645\\u0634 \\u0645\\u062a\\u0627\\u062d \\u2014 \\u062a\\u0623\\u0643\\u062f \\u0625\\u0646 Raw Body \\u0645\\u0641\\u0639\\u0651\\u0644 \\u0641\\u064a \\u0627\\u0644\\u0640 Webhook node (options.rawBody = true)');\n}\n\nconst rawBodyString = rawBodyBuffer.toString('utf8');\n\nconst expectedSignature = crypto\n  .createHmac('sha256', SIGNING_SECRET)\n  .update(rawBodyString)\n  .digest('hex');\n\nlet signatureValid = false;\nif (receivedSignature) {\n  try {\n    const a = Buffer.from(String(receivedSignature));\n    const b = Buffer.from(expectedSignature);\n    signatureValid = a.length === b.length && crypto.timingSafeEqual(a, b);\n  } catch (e) {\n    signatureValid = false;\n  }\n}\n\nlet parsedBody = {};\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  parsedBody = {};\n}\n\nreturn [{\n  json: {\n    signature_valid: signatureValid,\n    body: parsedBody,\n    headers: $json.headers || {}\n  }\n}];"
+   }
+  },
+  {
+   "id": "f888fe52-01fb-4aa1-a9f2-379827232dbd",
+   "name": "Signature Valid? Instagram",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -2256,
+    80
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "sig1000-1002-4a11-a222-ig0000000001",
+       "leftValue": "={{ $json.signature_valid }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "17703287-53fd-45f1-a670-65853c0af1a8",
+   "name": "Reject - Invalid Signature Instagram",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -2256,
+    368
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+    "options": {
+     "responseCode": 401
+    }
+   }
+  },
+  {
+   "id": "3ab445b4-e9ee-4bfd-8d25-9aefcc4e9038",
+   "name": "Parse Instagram Thikaa Message1",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1968,
+    64
+   ],
+   "parameters": {
+    "jsCode": "// نفس بنية payload ثيكا الموحدة:\n// { event, instance_id, timestamp, data: { channel, conversation_id, message_id, from, from_user_id, text, attachments } }\nconst body = $json.body || {};\n\nconsole.log('🔎 RAW THIKAA INSTAGRAM BODY:', JSON.stringify(body, null, 2));\n\nif (body.event !== 'message.received') {\n  return [{\n    json: {\n      is_status_update: true,\n      event: body.event || null,\n      raw_body: body\n    }\n  }];\n}\n\nconst data = body.data || {};\n\nconst channelPatientId = data.from || null;\nconst messageText = data.text || null;\nconst messageType = data.attachments && data.attachments.length > 0 ? 'media' : 'text';\nconst channelCode = data.channel || 'ig';\nconst thikaaInstanceId = body.instance_id || null;\nconst messageId = data.message_id || null;\n\n// مفتاح فريد لكل رسالة عشان نمنع المعالجة المكررة لو ثيكا عملت retry\nconst idempotencyKey = (thikaaInstanceId && messageId)\n  ? `thikaa_ig_${thikaaInstanceId}_${messageId}`\n  : null; // لو مفيش message_id، مفيش حماية idempotency لنفس الرسالة دي\n\nif (!channelPatientId || !messageText) {\n  return [{\n    json: {\n      is_status_update: true,\n      raw_body: body\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId).replace(/^\\+/, ''),\n    patient_name: data.from_user_name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: channelCode,\n    thikaa_instance_id: thikaaInstanceId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+   }
+  },
+  {
+   "id": "97eeb22f-b843-498d-b4fc-63a4f6c6bebf",
+   "name": "Log Webhook Instagram Thikaa1",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -1712,
+    64
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+    },
+    "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('thikaa', $1, $2::jsonb, 'pending', now(), 'ig_thikaa_dynamic_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "b605df03-6946-4845-8e15-c40502b82b76",
+   "name": "Check Not Duplicate Instagram Thikaa1",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1456,
+    64
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "7b2c3d4e-0022-4a11-9b22-555555555555",
+       "leftValue": "={{ $json.is_new }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "854fe020-1a77-4406-bc4b-44553b501d6c",
+   "name": "Respond Duplicate Instagram Thikaa1",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1504,
+    448
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "DUPLICATE_IGNORED",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "0d6de6b9-eaf9-4f21-a8e1-7e70c4cd8454",
+   "name": "Is Real Message? Instagram Thikaa1",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1168,
+    48
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "d4e5f6a7-3333-4a11-9e33-999999999999",
+       "leftValue": "={ $('Parse Instagram Thikaa Message1').item.json.is_status_update }",
+       "rightValue": false,
+       "operator": {
+        "type": "boolean",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "a4b731f6-8a62-4e5f-a9b0-46bc454f60e6",
+   "name": "Ignore - Status Update Instagram Thikaa1",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1232,
+    464
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "32b03e8d-430e-4d58-a4dd-b1a1a58cdacf",
+   "name": "Is Instagram Channel? Instagram",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -848,
+    32
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "chan1000-1002-4a11-a222-ig0000000002",
+       "leftValue": "={ $('Parse Instagram Thikaa Message1').item.json.channel_code }",
+       "rightValue": "ig",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "da51709d-485b-444c-8d7c-328fd1b853be",
+   "name": "Reject - Wrong Channel Instagram",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -944,
+    464
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+    "options": {
+     "responseCode": 400
+    }
+   }
+  },
+  {
+   "id": "db1361be-faf4-4dee-a121-9db12fb5e7a4",
+   "name": "Lookup Clinic ID Instagram Thikaa1",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -480,
+    16
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Parse Instagram Thikaa Message1').item.json.thikaa_instance_id ] }}"
+    },
+    "query": "SELECT (array_agg(c.id))[1] AS clinic_id,\n       (array_agg(ch.id))[1] AS channel_id,\n       COUNT(*)::int AS match_count\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'thikaa'\n  AND ch.type = 'instagram'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.config->>'thikaa_instance_id' = $1\nGROUP BY ch.config->>'thikaa_instance_id'\nHAVING COUNT(*) = 1\nLIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "2c4a8014-ba58-4fb8-9fb2-b0391ea01653",
+   "name": "Check Clinic Found Instagram Thikaa1",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -240,
+    16
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "clinic1000-1002-4a11-a222-ig0000000003",
+       "leftValue": "={{ $json.clinic_id }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "6022cad0-2b9c-4b1a-bdd3-e18b2d8cd0ae",
+   "name": "Log Unknown Instance Instagram Thikaa1",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -272,
+    384
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={ [ $('Log Webhook Instagram Thikaa1').item.json.id ] }"
+    },
+    "query": "UPDATE webhook_logs SET status = 'ignored', error_message = 'unknown_or_disabled_instance_id' WHERE id = $1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "d0b6d817-f238-4735-8631-824533d60caa",
+   "name": "Respond Unknown Instance Instagram Thikaa1",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -48,
+    384
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "d9dafd37-c755-466e-9866-84b8d3e9ea84",
+   "name": "Merge Clinic With Message Instagram Thikaa1",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const message = $('Parse Instagram Thikaa Message1').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null,\n    thikaa_instance_id: clinicLookup.thikaa_instance_id || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "1448c277-e0bb-411e-b82d-1907f52606d6",
+   "name": "Get Channel Secret Instagram",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    80,
+    160
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.channel_id ] }}"
+    },
+    "query": "SELECT * FROM get_channel_secret_db($1::uuid);"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "c1eb8791-8ca3-4144-ab0e-7389e3ca9d03",
+   "name": "Merge Channel Secret Instagram",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    288,
+    160
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message Instagram Thikaa1').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    thikaa_api_token: secretResult.api_token || null,\n    thikaa_signing_secret: secretResult.signing_secret || null,\n    thikaa_tenant_identifier: secretResult.tenant_identifier || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "30325439-974d-4128-99ee-edcd63e89928",
+   "name": "Find Or Create Patient Instagram Thikaa1",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    224,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $json.clinic_id,\n  p_phone: $json.channel_patient_id,\n  p_channel_type: 'instagram',\n  p_channel_patient_id: $json.channel_patient_id,\n  p_full_name: $json.patient_name\n}) }}",
+    "options": {
+     "timeout": 10000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth"
+   },
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "p2J79GLR4o6Yonjo",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "id": "81f9dccf-4dd2-4b5a-9cad-a20f1fc8db73",
+   "name": "Merge Patient Data Instagram Thikaa1",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    432,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message Instagram Thikaa1').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('❌ No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+   }
+  },
+  {
+   "id": "cde60f97-3d26-46c1-b86e-72d5cf96a054",
+   "name": "Get Or Create Conversation Instagram Thikaa1",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    688,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/get_or_create_channel_conversation",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({p_clinic_id:$json.clinic_id,p_patient_id:$json.patient_id,p_channel_id:$json.channel_id,p_channel_conversation_id:$json.channel_patient_id}) }}",
+    "options": {
+     "timeout": 10000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth"
+   },
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "p2J79GLR4o6Yonjo",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "id": "7fe88aa6-30ea-404b-b1fb-4ae36aa7540a",
+   "name": "Merge Conversation Data Instagram Thikaa1",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    336,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Patient Data Instagram Thikaa1').item.json;\nconst convResult = $input.item.json;\n\nlet conversationId = null;\nlet channelId = null;\n\nif (convResult.conversation_id) {\n    conversationId = convResult.conversation_id;\n    channelId = convResult.channel_id || null;\n} else if (convResult.result && convResult.result.conversation_id) {\n    conversationId = convResult.result.conversation_id;\n    channelId = convResult.result.channel_id || null;\n} else if (Array.isArray(convResult) && convResult.length > 0) {\n    conversationId = convResult[0].conversation_id || convResult[0].result?.conversation_id || null;\n    channelId = convResult[0].channel_id || convResult[0].result?.channel_id || null;\n} else if (convResult.data && Array.isArray(convResult.data) && convResult.data.length > 0) {\n    conversationId = convResult.data[0].conversation_id || convResult.data[0].result?.conversation_id || null;\n    channelId = convResult.data[0].channel_id || convResult.data[0].result?.channel_id || null;\n}\n\nif (!conversationId) {\n    console.error('❌ No conversation_id found:', JSON.stringify(convResult, null, 2));\n    throw new Error('❌ Failed to get conversation_id from RPC response');\n}\n\nif (!channelId) {\n    channelId = original.channel_id || null;\n}\n\nreturn [{\n    json: {\n        ...original,\n        conversation_id: conversationId,\n        channel_id: channelId\n    }\n}];"
+   }
+  },
+  {
+   "id": "46cf3ecd-0c62-4d18-af29-157a1b3164eb",
+   "name": "Respond OK Instagram Thikaa1",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1488,
+    400
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "29ba295e-3e3b-4719-a4a9-48f2f86c3fdc",
+   "name": "Call Core Engine Instagram Thikaa1",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    608,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      },
+      {
+       "name": "X-K2-Signature",
+       "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+    "options": {
+     "timeout": 180000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "a86ac7ba-67f7-4507-968f-868674f31d32",
+   "name": "IF Core Engine Handoff Suppressed (Instagram)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    848,
+    368
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "core-engine-handoff-suppressed-ig-20260820",
+       "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+       "operator": {
+        "operation": "true",
+        "singleValue": true,
+        "type": "boolean"
+       },
+       "rightValue": true
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "19733b89-9666-45aa-a1b3-c22607615e5a",
+   "name": "Prepare Instagram Thikaa Reply1",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    864,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse Instagram Thikaa Message1').item.json.channel_patient_id || null;\n    } catch (e) { console.log('⚠️ Could not get from Parse {L} Thikaa Message1'); }\n}\n\nif (!patientId) {\n    console.warn('⚠️ No patient id found');\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+   }
+  },
+  {
+   "id": "56cd4bf9-e542-4cac-b2c2-be649a54a4f4",
+   "name": "Send Instagram Thikaa Reply1",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1088,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://thikaa.com/thik_tenant_hamedadel/api/messaging/?action=send",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "={{ 'Bearer ' + String($('Merge Channel Secret Instagram').item.json.thikaa_api_token || '') }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ channel: 'ig', to: String($json.thikaa_recipient || ''), message: String($json.thikaa_message || '') }) }}",
+    "options": {
+     "timeout": 15000
+    }
+   }
+  },
+  {
+   "id": "5c2db7c0-6553-478c-bd5c-b42fe444c54f",
+   "name": "Mark Webhook Processed Instagram Thikaa1",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    1264,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Merge Conversation Data Instagram Thikaa1').item.json.clinic_id, $('Merge Conversation Data Instagram Thikaa1').item.json.channel_id, $('Log Webhook Instagram Thikaa1').item.json.id, $('Parse Instagram Thikaa Message1').item.json.idempotency_key ] }}"
+    },
+    "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "9be72f31-adfd-4e17-a0ba-7a8ca3b93f7f",
+   "name": "Build K2 Signed Core Envelope",
+   "notesInFlow": true,
+   "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    388,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const src = $('Merge Conversation Data Instagram Thikaa1').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'instagram',\n  channel_provider: 'thikaa',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    instagram_user_id: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    thikaa_instance_id: src.thikaa_instance_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+   }
+  },
+  {
+   "id": "b36f244c-52ec-48a8-8c19-2c731af75b9d",
+   "name": "Compute K2 HMAC Signature",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    498,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+    },
+    "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Webhook Receive Instagram": {
+   "main": [
+    [
+     {
+      "node": "Verify Thikaa Signature Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify Thikaa Signature Instagram": {
+   "main": [
+    [
+     {
+      "node": "Signature Valid? Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Signature Valid? Instagram": {
+   "main": [
+    [
+     {
+      "node": "Parse Instagram Thikaa Message1",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Invalid Signature Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Instagram Thikaa Message1": {
+   "main": [
+    [
+     {
+      "node": "Log Webhook Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Webhook Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Check Not Duplicate Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Not Duplicate Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Is Real Message? Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond Duplicate Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Real Message? Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Is Instagram Channel? Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ignore - Status Update Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Instagram Channel? Instagram": {
+   "main": [
+    [
+     {
+      "node": "Lookup Clinic ID Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Wrong Channel Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lookup Clinic ID Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Check Clinic Found Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Clinic Found Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Merge Clinic With Message Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Log Unknown Instance Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Unknown Instance Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Respond Unknown Instance Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Clinic With Message Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Get Channel Secret Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Channel Secret Instagram": {
+   "main": [
+    [
+     {
+      "node": "Merge Channel Secret Instagram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Channel Secret Instagram": {
+   "main": [
+    [
+     {
+      "node": "Find Or Create Patient Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Or Create Patient Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Merge Patient Data Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Patient Data Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Get Or Create Conversation Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Or Create Conversation Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Merge Conversation Data Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Conversation Data Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Respond OK Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Respond OK Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "Build K2 Signed Core Envelope",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Core Engine Instagram Thikaa1": {
+   "main": [
+    [
+     {
+      "node": "IF Core Engine Handoff Suppressed (Instagram)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Core Engine Handoff Suppressed (Instagram)": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare Instagram Thikaa Reply1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Instagram Thikaa Reply1": {
+   "main": [
+    [
+     {
+      "node": "Send Instagram Thikaa Reply1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send Instagram Thikaa Reply1": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build K2 Signed Core Envelope": {
+   "main": [
+    [
+     {
+      "node": "Compute K2 HMAC Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute K2 HMAC Signature": {
+   "main": [
+    [
+     {
+      "node": "Call Core Engine Instagram Thikaa1",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "sMYdPDrdXrLJXxNM",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:19.484Z",
+   "updatedAt": "2026-09-22T19:25:19.484Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "cc4f1356-e79d-41c6-aa22-5b1e88518faa",
+  "workflowId": "sMYdPDrdXrLJXxNM",
+  "nodes": [
+   {
+    "id": "70fdaca1-7fbf-41f5-9fab-36346492d0e0",
+    "name": "Webhook Receive Instagram",
+    "webhookId": "74666929-5ce7-4ddc-9357-7db67a894595",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -2736,
+     80
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "ig-thikaa-webhook",
+     "responseMode": "responseNode",
+     "options": {
+      "rawBody": true
+     }
+    }
+   },
+   {
+    "id": "8debaefd-73f5-486b-942b-0ed06098e8b0",
+    "name": "Verify Thikaa Signature Instagram",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -2464,
+     80
+    ],
+    "parameters": {
+     "jsCode": "const crypto = require('crypto');\n// Confirmed working header name: x-thikaa-signature\nconst SIGNATURE_HEADER = 'x-thikaa-signature';\n// Instagram-only signing secret\nconst SIGNING_SECRET = 'ab41d1f152cf71f024498874e083d9c6b050c83fe8545aab';\n\nconst headers = $json.headers || {};\nlet receivedSignature =\n  headers[SIGNATURE_HEADER] ||\n  headers[SIGNATURE_HEADER.toLowerCase()] ||\n  headers[SIGNATURE_HEADER.toUpperCase()] ||\n  null;\n\n// ثيكا بتحط بادئة 'sha256=' قبل الـ hash — لازم نشيلها قبل المقارنة\nif (receivedSignature && receivedSignature.startsWith('sha256=')) {\n  receivedSignature = receivedSignature.slice('sha256='.length);\n}\n\nlet rawBodyBuffer;\ntry {\n  rawBodyBuffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  throw new Error('\\u274c Raw body \\u0645\\u0634 \\u0645\\u062a\\u0627\\u062d \\u2014 \\u062a\\u0623\\u0643\\u062f \\u0625\\u0646 Raw Body \\u0645\\u0641\\u0639\\u0651\\u0644 \\u0641\\u064a \\u0627\\u0644\\u0640 Webhook node (options.rawBody = true)');\n}\n\nconst rawBodyString = rawBodyBuffer.toString('utf8');\n\nconst expectedSignature = crypto\n  .createHmac('sha256', SIGNING_SECRET)\n  .update(rawBodyString)\n  .digest('hex');\n\nlet signatureValid = false;\nif (receivedSignature) {\n  try {\n    const a = Buffer.from(String(receivedSignature));\n    const b = Buffer.from(expectedSignature);\n    signatureValid = a.length === b.length && crypto.timingSafeEqual(a, b);\n  } catch (e) {\n    signatureValid = false;\n  }\n}\n\nlet parsedBody = {};\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  parsedBody = {};\n}\n\nreturn [{\n  json: {\n    signature_valid: signatureValid,\n    body: parsedBody,\n    headers: $json.headers || {}\n  }\n}];"
+    }
+   },
+   {
+    "id": "f888fe52-01fb-4aa1-a9f2-379827232dbd",
+    "name": "Signature Valid? Instagram",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -2256,
+     80
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "sig1000-1002-4a11-a222-ig0000000001",
+        "leftValue": "={{ $json.signature_valid }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "17703287-53fd-45f1-a670-65853c0af1a8",
+    "name": "Reject - Invalid Signature Instagram",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -2256,
+     368
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+     "options": {
+      "responseCode": 401
+     }
+    }
+   },
+   {
+    "id": "3ab445b4-e9ee-4bfd-8d25-9aefcc4e9038",
+    "name": "Parse Instagram Thikaa Message1",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1968,
+     64
+    ],
+    "parameters": {
+     "jsCode": "// نفس بنية payload ثيكا الموحدة:\n// { event, instance_id, timestamp, data: { channel, conversation_id, message_id, from, from_user_id, text, attachments } }\nconst body = $json.body || {};\n\nconsole.log('🔎 RAW THIKAA INSTAGRAM BODY:', JSON.stringify(body, null, 2));\n\nif (body.event !== 'message.received') {\n  return [{\n    json: {\n      is_status_update: true,\n      event: body.event || null,\n      raw_body: body\n    }\n  }];\n}\n\nconst data = body.data || {};\n\nconst channelPatientId = data.from || null;\nconst messageText = data.text || null;\nconst messageType = data.attachments && data.attachments.length > 0 ? 'media' : 'text';\nconst channelCode = data.channel || 'ig';\nconst thikaaInstanceId = body.instance_id || null;\nconst messageId = data.message_id || null;\n\n// مفتاح فريد لكل رسالة عشان نمنع المعالجة المكررة لو ثيكا عملت retry\nconst idempotencyKey = (thikaaInstanceId && messageId)\n  ? `thikaa_ig_${thikaaInstanceId}_${messageId}`\n  : null; // لو مفيش message_id، مفيش حماية idempotency لنفس الرسالة دي\n\nif (!channelPatientId || !messageText) {\n  return [{\n    json: {\n      is_status_update: true,\n      raw_body: body\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId).replace(/^\\+/, ''),\n    patient_name: data.from_user_name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: channelCode,\n    thikaa_instance_id: thikaaInstanceId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+    }
+   },
+   {
+    "id": "97eeb22f-b843-498d-b4fc-63a4f6c6bebf",
+    "name": "Log Webhook Instagram Thikaa1",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -1712,
+     64
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+     },
+     "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('thikaa', $1, $2::jsonb, 'pending', now(), 'ig_thikaa_dynamic_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "b605df03-6946-4845-8e15-c40502b82b76",
+    "name": "Check Not Duplicate Instagram Thikaa1",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1456,
+     64
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "7b2c3d4e-0022-4a11-9b22-555555555555",
+        "leftValue": "={{ $json.is_new }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "854fe020-1a77-4406-bc4b-44553b501d6c",
+    "name": "Respond Duplicate Instagram Thikaa1",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1504,
+     448
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "DUPLICATE_IGNORED",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "0d6de6b9-eaf9-4f21-a8e1-7e70c4cd8454",
+    "name": "Is Real Message? Instagram Thikaa1",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1168,
+     48
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      },
+      "conditions": [
+       {
+        "id": "d4e5f6a7-3333-4a11-9e33-999999999999",
+        "leftValue": "={ $('Parse Instagram Thikaa Message1').item.json.is_status_update }",
+        "rightValue": false,
+        "operator": {
+         "type": "boolean",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "a4b731f6-8a62-4e5f-a9b0-46bc454f60e6",
+    "name": "Ignore - Status Update Instagram Thikaa1",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1232,
+     464
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "32b03e8d-430e-4d58-a4dd-b1a1a58cdacf",
+    "name": "Is Instagram Channel? Instagram",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -848,
+     32
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "chan1000-1002-4a11-a222-ig0000000002",
+        "leftValue": "={ $('Parse Instagram Thikaa Message1').item.json.channel_code }",
+        "rightValue": "ig",
+        "operator": {
+         "type": "string",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "da51709d-485b-444c-8d7c-328fd1b853be",
+    "name": "Reject - Wrong Channel Instagram",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -944,
+     464
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+     "options": {
+      "responseCode": 400
+     }
+    }
+   },
+   {
+    "id": "db1361be-faf4-4dee-a121-9db12fb5e7a4",
+    "name": "Lookup Clinic ID Instagram Thikaa1",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -480,
+     16
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Parse Instagram Thikaa Message1').item.json.thikaa_instance_id ] }}"
+     },
+     "query": "SELECT (array_agg(c.id))[1] AS clinic_id,\n       (array_agg(ch.id))[1] AS channel_id,\n       COUNT(*)::int AS match_count\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'thikaa'\n  AND ch.type = 'instagram'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND ch.config->>'thikaa_instance_id' = $1\nGROUP BY ch.config->>'thikaa_instance_id'\nHAVING COUNT(*) = 1\nLIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "2c4a8014-ba58-4fb8-9fb2-b0391ea01653",
+    "name": "Check Clinic Found Instagram Thikaa1",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -240,
+     16
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "clinic1000-1002-4a11-a222-ig0000000003",
+        "leftValue": "={{ $json.clinic_id }}",
+        "rightValue": "",
+        "operator": {
+         "type": "string",
+         "operation": "notEmpty",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "6022cad0-2b9c-4b1a-bdd3-e18b2d8cd0ae",
+    "name": "Log Unknown Instance Instagram Thikaa1",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -272,
+     384
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={ [ $('Log Webhook Instagram Thikaa1').item.json.id ] }"
+     },
+     "query": "UPDATE webhook_logs SET status = 'ignored', error_message = 'unknown_or_disabled_instance_id' WHERE id = $1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "d0b6d817-f238-4735-8631-824533d60caa",
+    "name": "Respond Unknown Instance Instagram Thikaa1",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -48,
+     384
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "d9dafd37-c755-466e-9866-84b8d3e9ea84",
+    "name": "Merge Clinic With Message Instagram Thikaa1",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const message = $('Parse Instagram Thikaa Message1').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null,\n    thikaa_instance_id: clinicLookup.thikaa_instance_id || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "1448c277-e0bb-411e-b82d-1907f52606d6",
+    "name": "Get Channel Secret Instagram",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     80,
+     160
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.channel_id ] }}"
+     },
+     "query": "SELECT * FROM get_channel_secret_db($1::uuid);"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "c1eb8791-8ca3-4144-ab0e-7389e3ca9d03",
+    "name": "Merge Channel Secret Instagram",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     288,
+     160
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message Instagram Thikaa1').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    thikaa_api_token: secretResult.api_token || null,\n    thikaa_signing_secret: secretResult.signing_secret || null,\n    thikaa_tenant_identifier: secretResult.tenant_identifier || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "30325439-974d-4128-99ee-edcd63e89928",
+    "name": "Find Or Create Patient Instagram Thikaa1",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     224,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $json.clinic_id,\n  p_phone: $json.channel_patient_id,\n  p_channel_type: 'instagram',\n  p_channel_patient_id: $json.channel_patient_id,\n  p_full_name: $json.patient_name\n}) }}",
+     "options": {
+      "timeout": 10000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpCustomAuth"
+    },
+    "credentials": {
+     "httpCustomAuth": {
+      "id": "p2J79GLR4o6Yonjo",
+      "name": "Custom Auth account"
+     }
+    }
+   },
+   {
+    "id": "81f9dccf-4dd2-4b5a-9cad-a20f1fc8db73",
+    "name": "Merge Patient Data Instagram Thikaa1",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     432,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message Instagram Thikaa1').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('❌ No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+    }
+   },
+   {
+    "id": "cde60f97-3d26-46c1-b86e-72d5cf96a054",
+    "name": "Get Or Create Conversation Instagram Thikaa1",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     688,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/get_or_create_channel_conversation",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({p_clinic_id:$json.clinic_id,p_patient_id:$json.patient_id,p_channel_id:$json.channel_id,p_channel_conversation_id:$json.channel_patient_id}) }}",
+     "options": {
+      "timeout": 10000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpCustomAuth"
+    },
+    "credentials": {
+     "httpCustomAuth": {
+      "id": "p2J79GLR4o6Yonjo",
+      "name": "Custom Auth account"
+     }
+    }
+   },
+   {
+    "id": "7fe88aa6-30ea-404b-b1fb-4ae36aa7540a",
+    "name": "Merge Conversation Data Instagram Thikaa1",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     336,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Patient Data Instagram Thikaa1').item.json;\nconst convResult = $input.item.json;\n\nlet conversationId = null;\nlet channelId = null;\n\nif (convResult.conversation_id) {\n    conversationId = convResult.conversation_id;\n    channelId = convResult.channel_id || null;\n} else if (convResult.result && convResult.result.conversation_id) {\n    conversationId = convResult.result.conversation_id;\n    channelId = convResult.result.channel_id || null;\n} else if (Array.isArray(convResult) && convResult.length > 0) {\n    conversationId = convResult[0].conversation_id || convResult[0].result?.conversation_id || null;\n    channelId = convResult[0].channel_id || convResult[0].result?.channel_id || null;\n} else if (convResult.data && Array.isArray(convResult.data) && convResult.data.length > 0) {\n    conversationId = convResult.data[0].conversation_id || convResult.data[0].result?.conversation_id || null;\n    channelId = convResult.data[0].channel_id || convResult.data[0].result?.channel_id || null;\n}\n\nif (!conversationId) {\n    console.error('❌ No conversation_id found:', JSON.stringify(convResult, null, 2));\n    throw new Error('❌ Failed to get conversation_id from RPC response');\n}\n\nif (!channelId) {\n    channelId = original.channel_id || null;\n}\n\nreturn [{\n    json: {\n        ...original,\n        conversation_id: conversationId,\n        channel_id: channelId\n    }\n}];"
+    }
+   },
+   {
+    "id": "46cf3ecd-0c62-4d18-af29-157a1b3164eb",
+    "name": "Respond OK Instagram Thikaa1",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1488,
+     400
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "29ba295e-3e3b-4719-a4a9-48f2f86c3fdc",
+    "name": "Call Core Engine Instagram Thikaa1",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     608,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "X-K2-Signature",
+        "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+     "options": {
+      "timeout": 180000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth"
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "SO91NTrTgX172Ew9",
+      "name": "K2 Internal Core Engine Auth"
+     }
+    }
+   },
+   {
+    "id": "a86ac7ba-67f7-4507-968f-868674f31d32",
+    "name": "IF Core Engine Handoff Suppressed (Instagram)",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     848,
+     368
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "core-engine-handoff-suppressed-ig-20260820",
+        "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+        "operator": {
+         "operation": "true",
+         "singleValue": true,
+         "type": "boolean"
+        },
+        "rightValue": true
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "19733b89-9666-45aa-a1b3-c22607615e5a",
+    "name": "Prepare Instagram Thikaa Reply1",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     864,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse Instagram Thikaa Message1').item.json.channel_patient_id || null;\n    } catch (e) { console.log('⚠️ Could not get from Parse {L} Thikaa Message1'); }\n}\n\nif (!patientId) {\n    console.warn('⚠️ No patient id found');\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+    }
+   },
+   {
+    "id": "56cd4bf9-e542-4cac-b2c2-be649a54a4f4",
+    "name": "Send Instagram Thikaa Reply1",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1088,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://thikaa.com/thik_tenant_hamedadel/api/messaging/?action=send",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Authorization",
+        "value": "={{ 'Bearer ' + String($('Merge Channel Secret Instagram').item.json.thikaa_api_token || '') }}"
+       },
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ channel: 'ig', to: String($json.thikaa_recipient || ''), message: String($json.thikaa_message || '') }) }}",
+     "options": {
+      "timeout": 15000
+     }
+    }
+   },
+   {
+    "id": "5c2db7c0-6553-478c-bd5c-b42fe444c54f",
+    "name": "Mark Webhook Processed Instagram Thikaa1",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1264,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Merge Conversation Data Instagram Thikaa1').item.json.clinic_id, $('Merge Conversation Data Instagram Thikaa1').item.json.channel_id, $('Log Webhook Instagram Thikaa1').item.json.id, $('Parse Instagram Thikaa Message1').item.json.idempotency_key ] }}"
+     },
+     "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "9be72f31-adfd-4e17-a0ba-7a8ca3b93f7f",
+    "name": "Build K2 Signed Core Envelope",
+    "notesInFlow": true,
+    "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     388,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const src = $('Merge Conversation Data Instagram Thikaa1').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'instagram',\n  channel_provider: 'thikaa',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    instagram_user_id: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    thikaa_instance_id: src.thikaa_instance_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+    }
+   },
+   {
+    "id": "b36f244c-52ec-48a8-8c19-2c731af75b9d",
+    "name": "Compute K2 HMAC Signature",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     498,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+     },
+     "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Webhook Receive Instagram": {
+    "main": [
+     [
+      {
+       "node": "Verify Thikaa Signature Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Verify Thikaa Signature Instagram": {
+    "main": [
+     [
+      {
+       "node": "Signature Valid? Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Signature Valid? Instagram": {
+    "main": [
+     [
+      {
+       "node": "Parse Instagram Thikaa Message1",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Invalid Signature Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse Instagram Thikaa Message1": {
+    "main": [
+     [
+      {
+       "node": "Log Webhook Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Webhook Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Check Not Duplicate Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Not Duplicate Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Is Real Message? Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Respond Duplicate Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Real Message? Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Is Instagram Channel? Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Ignore - Status Update Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Instagram Channel? Instagram": {
+    "main": [
+     [
+      {
+       "node": "Lookup Clinic ID Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Wrong Channel Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Lookup Clinic ID Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Check Clinic Found Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Clinic Found Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Merge Clinic With Message Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Log Unknown Instance Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Unknown Instance Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Respond Unknown Instance Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Clinic With Message Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Get Channel Secret Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Channel Secret Instagram": {
+    "main": [
+     [
+      {
+       "node": "Merge Channel Secret Instagram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Channel Secret Instagram": {
+    "main": [
+     [
+      {
+       "node": "Find Or Create Patient Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find Or Create Patient Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Merge Patient Data Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Patient Data Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Get Or Create Conversation Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Or Create Conversation Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Merge Conversation Data Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Conversation Data Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Respond OK Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Respond OK Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "Build K2 Signed Core Envelope",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Call Core Engine Instagram Thikaa1": {
+    "main": [
+     [
+      {
+       "node": "IF Core Engine Handoff Suppressed (Instagram)",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF Core Engine Handoff Suppressed (Instagram)": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare Instagram Thikaa Reply1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare Instagram Thikaa Reply1": {
+    "main": [
+     [
+      {
+       "node": "Send Instagram Thikaa Reply1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send Instagram Thikaa Reply1": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build K2 Signed Core Envelope": {
+    "main": [
+     [
+      {
+       "node": "Compute K2 HMAC Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute K2 HMAC Signature": {
+    "main": [
+     [
+      {
+       "node": "Call Core Engine Instagram Thikaa1",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:24.574Z",
+  "updatedAt": "2026-09-22T20:13:24.574Z",
+  "workflowPublishHistory": [
+   {
+    "id": 80,
+    "workflowId": "sMYdPDrdXrLJXxNM",
+    "versionId": "cc4f1356-e79d-41c6-aa22-5b1e88518faa",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:24.611Z"
+   }
+  ]
+ }
+}

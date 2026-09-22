@@ -1,0 +1,1420 @@
+{
+ "id": "19uCr1CLZ3QHrqPM",
+ "name": "MERUNA / Inbox / Outbound Reply Dispatcher • Four Channels",
+ "description": null,
+ "active": true,
+ "activeVersionId": "5362f130-6ec3-45d2-82b4-a801f71097a4",
+ "createdAt": "2026-09-22T19:25:09.276Z",
+ "updatedAt": "2026-09-22T20:12:47.683Z",
+ "isArchived": false,
+ "versionId": "5362f130-6ec3-45d2-82b4-a801f71097a4",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "ab53ef89-6d32-4bf8-a54b-6a653d2fbd2a",
+   "name": "Inbox Outbound Webhook",
+   "webhookId": "eeb2d3a3-2fcd-403b-b2d0-a1ea346e45e1",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -304,
+    544
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "inbox-outbound",
+    "authentication": "headerAuth",
+    "responseMode": "responseNode",
+    "options": {}
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "cK3Q2aKzyXTJoCFX",
+     "name": "Header Auth account"
+    }
+   }
+  },
+  {
+   "id": "cf29828e-6d66-41e8-8214-26d812097826",
+   "name": "Extract Conversation ID",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    -80,
+    544
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "conv-id",
+       "name": "conversation_id",
+       "value": "={{ $json.body.conversation_id }}",
+       "type": "string"
+      },
+      {
+       "id": "message-id",
+       "name": "message_id",
+       "value": "={{ $json.body.message_id }}",
+       "type": "string"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "90fdfa9b-efdd-4f70-9773-b99371274ba4",
+   "name": "Fetch Queued Message",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    144,
+    544
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT m.id AS message_id, m.conversation_id, m.content,\n       c.clinic_id, c.channel_id, c.patient_id,\n       c.channel_conversation_id,\n       ch.provider, ch.type, ch.config AS channel_config,\n       ch.phone_number_id, ch.business_account_id,\n       ch.provider AS eff_provider,\n       COALESCE(cs.api_token, NULL) AS api_token,\n       ch.phone_number_id AS gupshup_source,\n       COALESCE(cs.tenant_identifier, NULL) AS tenant_identifier,\n       COALESCE(p.phone_normalized, p.phone) AS recipient\nFROM messages m\nJOIN conversations c ON c.id = m.conversation_id\nJOIN channels ch ON ch.id = c.channel_id\nLEFT JOIN get_channel_secret_db(ch.id) cs ON true\nLEFT JOIN patients p ON p.id = c.patient_id\nWHERE m.id = COALESCE(NULLIF($1::text, '')::uuid, (\n  SELECT id FROM messages\n  WHERE conversation_id = $2::uuid\n    AND direction = 'outgoing'\n    AND sender_type IN ('ai', 'clinic')\n    AND message_status = 'sent'\n  ORDER BY created_at DESC LIMIT 1\n))\n  AND m.conversation_id = $2::uuid\n  AND m.direction = 'outgoing'\n  AND m.message_status IN ('sent','delivered')\nLIMIT 1;\n",
+    "options": {
+     "queryReplacement": "={{ [$(\"Extract Conversation ID\").first().json.message_id || \"\", $(\"Extract Conversation ID\").first().json.conversation_id] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "fcd488b6-6973-4e62-9a13-25a92d7c1e03",
+   "name": "Build Provider Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    368,
+    544
+   ],
+   "parameters": {
+    "jsCode": "const row = $input.first().json || {};\nif (!row.message_id) return [{ json: { skip: true, reason: 'no_queued_message' } }];\nif (String(row.message_status || '').toLowerCase() === 'delivered') return [{ json: { skip: true, reason: 'already_delivered', message_id: row.message_id } }];\nconst provider = String(row.eff_provider || row.provider || 'thikaa').toLowerCase();\nconst channelType = String(row.type || 'whatsapp').toLowerCase();\nconst isDirectTelegram = channelType === 'telegram' && provider !== 'meta' && provider !== 'superchat';\nconst recipient = String(row.recipient || '').trim();\nif (!recipient && !isDirectTelegram) return [{ json: { skip: true, reason: 'no_recipient', message_id: row.message_id } }];\nconst content = String(row.content || '').slice(0, 4000);\nconst cfg = row.channel_config && typeof row.channel_config === 'object' ? row.channel_config : {};\nconst superchatApiKey = String(cfg.superchat_api_key || '').trim();\nconst superchatChannelId = String(cfg.superchat_channel_id || '').trim();\nlet sendUrl = '', authHeader = '', body = {};\nif (isDirectTelegram) {\n  const telegramChatId = String(row.channel_conversation_id || '').trim();\n  if (!telegramChatId) return [{ json: { skip: true, reason: 'missing_telegram_chat_id', message_id: row.message_id, provider: 'telegram_direct', channelType } }];\n  return [{ json: {\n    sendUrl: '',\n    authHeader: '',\n    body: { chat_id: telegramChatId, text: content },\n    message_id: row.message_id,\n    provider: 'telegram_direct',\n    channelType,\n    telegram_chat_id: telegramChatId,\n    content,\n    skip: false,\n  } }];\n} else if (provider === 'thikaa') {\n  const codeMap = { whatsapp: 'wd', messenger: 'fb', instagram: 'ig', telegram: 'tg' };\n  body = { channel: codeMap[channelType] || 'wd', to: recipient, message: content };\n  sendUrl = 'https://thikaa.com/' + (row.tenant_identifier || '') + '/api/messaging/?action=send';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'meta' && channelType === 'whatsapp') {\n  body = { channel: 'whatsapp', source: String(row.gupshup_source || ''), destination: recipient, messageType: { type: 'text', text: content } };\n  sendUrl = 'https://api.gupshup.io/wa/api/v1/msg';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'meta' && (channelType === 'instagram' || channelType === 'messenger')) {\n  const pid = cfg.meta_phone_number_id || cfg.phone_number_id || '';\n  body = { messaging_product: channelType === 'instagram' ? 'instagram' : 'RESPONSE', to: recipient, text: { body: content } };\n  sendUrl = channelType === 'instagram' ? 'https://graph.facebook.com/v21.0/me/messages' : 'https://graph.facebook.com/v21.0/' + pid + '/messages';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'superchat' && superchatApiKey && superchatChannelId) {\n  return [{ json: { skip: false, needs_superchat_contact: true, message_id: row.message_id, content, recipient, superchat_api_key: superchatApiKey, superchat_channel_id: superchatChannelId, provider, channelType } }];\n} else {\n  return [{ json: { skip: true, reason: 'unsupported_provider_or_missing_channel_config', provider, channelType, message_id: row.message_id } }];\n}\nreturn [{ json: { sendUrl, authHeader, body, message_id: row.message_id, provider, channelType, content, skip: false } }];\n"
+   }
+  },
+  {
+   "id": "73aaaf4d-5369-403e-bccb-a877a977a9e6",
+   "name": "Check Skip",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    720,
+    -16
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "skip-cond",
+       "leftValue": "={{ $json.skip }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "9a55f5ce-7e12-44a0-8452-490f70e5c610",
+   "name": "Send to Provider",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    784,
+    784
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.sendUrl }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      },
+      {
+       "name": "Authorization",
+       "value": "={{ $json.authHeader }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.body) }}",
+    "options": {
+     "timeout": 20000
+    }
+   }
+  },
+  {
+   "id": "fce899d9-0667-42b6-bfe4-5b85251b855a",
+   "name": "Update Message Status",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    1312,
+    880
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "UPDATE messages\nSET message_status = CASE WHEN $1::boolean THEN 'delivered' ELSE 'failed' END\nWHERE id = $2::uuid\nRETURNING id AS message_id, message_status;\n",
+    "options": {
+     "queryReplacement": "={{ [$json.provider_acceptance_verified === true, $(\"Build Provider Request\").first().json.message_id] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "81634c81-ff85-4eb3-a326-aa16fd14c7d6",
+   "name": "Prepare OK Response",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    1520,
+    880
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "rt",
+       "name": "responseText",
+       "value": "ok",
+       "type": "string"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "81d57b39-5ae0-444c-a284-a2ce327f599c",
+   "name": "Prepare Skipped Response",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    1488,
+    64
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "rt",
+       "name": "responseText",
+       "value": "=skipped: {{ $json.reason }}",
+       "type": "string"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "a8a4d1ca-c647-4446-881f-8302d0f0405f",
+   "name": "Respond to Webhook",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1952,
+    496
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "={{ $json.responseText }}",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "f1e82bf2-4f9c-47fd-9ef7-c6a4eb2d4235",
+   "name": "IF SuperChat Deferred",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    496,
+    384
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "k2-superchat-condition",
+       "leftValue": "={{ $json.needs_superchat_contact === true }}",
+       "operator": {
+        "operation": "true",
+        "singleValue": true,
+        "type": "boolean"
+       },
+       "rightValue": true
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "19eb546a-cc26-461e-b4a5-facd95614573",
+   "name": "Find SuperChat Contact Deferred",
+   "disabled": true,
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    704,
+    368
+   ],
+   "parameters": {
+    "url": "={{ 'https://api.superchat.com/v1.0/contacts?channel_id=' + $('Build Provider Request').first().json.superchat_channel_id }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-API-KEY",
+       "value": "={{ $('Build Provider Request').first().json.superchat_api_key }}"
+      }
+     ]
+    },
+    "options": {
+     "timeout": 20000
+    }
+   }
+  },
+  {
+   "id": "a3442bb1-432b-4f28-93fe-d5ef95f6852c",
+   "name": "Build SuperChat Provider Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    944,
+    384
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const base = $('Build Provider Request').first().json || {};\nconst results = Array.isArray($json.results) ? $json.results : [];\nconst target = String(base.recipient || '').trim();\nlet contactId = null;\nfor (const contact of results) {\n  for (const handle of (Array.isArray(contact?.handles) ? contact.handles : [])) {\n    if (String(handle?.value || '').trim() === target) { contactId = contact.id || null; break; }\n  }\n  if (contactId) break;\n}\nif (!contactId) return [{ json: { ...base, skip: true, reason: 'no_matching_superchat_contact', message_id: base.message_id } }];\nconst sendUrl = 'https://api.superchat.com/v1.0/messages';\nif (!/^https:\\/\\/api\\.superchat\\.com\\//i.test(sendUrl)) {\n  return [{ json: { ...base, skip: true, reason: 'provider_host_not_allowlisted', message_id: base.message_id } }];\n}\nreturn [{ json: { ...base, skip: false, sendUrl, apiKeyHeader: base.superchat_api_key, body: { to: [{ identifier: contactId }], from: { channel_id: base.superchat_channel_id }, content: { type: 'text', body: base.content } }, message_id: base.message_id } }];"
+   }
+  },
+  {
+   "id": "31efb2d9-da2a-47b6-afac-c09699f61550",
+   "name": "Check SuperChat Skip",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1216,
+    384
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "k2-superchat-skip",
+       "leftValue": "={{ $json.skip }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "ec8312a7-cac4-4b90-9051-97ea7be96c94",
+   "name": "Send SuperChat Deferred Reply",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "retryOnFail": false,
+   "position": [
+    1440,
+    608
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.sendUrl }}",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-API-KEY",
+       "value": "={{ $json.apiKeyHeader }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.body) }}",
+    "options": {
+     "timeout": 20000
+    }
+   }
+  },
+  {
+   "id": "ad51f2ad-9f25-4fef-8623-c940a49468f9",
+   "name": "Validate Provider Acceptance",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1088,
+    880
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const rawInput = $json || {};\nconst req = $('Build Provider Request').first().json || {};\nconst provider = String(req.provider || '').toLowerCase();\nconst channelType = String(req.channelType || '').toLowerCase();\nconst decodeJsonText = (value) => {\n  if (typeof value !== 'string') return value;\n  const text = value.trim();\n  if (!text) return text;\n  try { return JSON.parse(text); } catch (e) { return text; }\n};\nconst decoded = decodeJsonText(rawInput);\nconst response = decoded && typeof decoded === 'object' && decoded.body !== undefined\n  ? decodeJsonText(decoded.body)\n  : decoded;\nlet accepted = false;\nlet evidence = 'http_2xx_only';\nif (provider === 'telegram_direct' && channelType === 'telegram') {\n  const telegramMessageId = Number(response?.result?.message_id ?? response?.message_id ?? 0);\n  accepted = response?.ok === true || telegramMessageId > 0;\n  evidence = accepted ? 'telegram_api_ok_message_id' : 'telegram_acceptance_unverified';\n} else if (provider === 'meta' && channelType === 'whatsapp') {\n  accepted = response && response.status === 'submitted' && typeof response.messageId === 'string' && response.messageId.trim().length > 0;\n  evidence = accepted ? 'gupshup_submitted_messageId' : 'gupshup_acceptance_unverified';\n} else if (provider === 'thikaa' || provider === 'superchat' || provider === 'meta') {\n  accepted = true;\n}\nif (!accepted) throw new Error('provider_acceptance_not_verified');\nreturn { json: { ...(decoded && typeof decoded === 'object' ? decoded : {}), provider_acceptance_verified: true, provider_acceptance_evidence: evidence, message_id: req.message_id } };\n"
+   }
+  },
+  {
+   "id": "af6cf951-3d0b-44de-93ca-9f5fc60e7b4f",
+   "name": "IF Direct Telegram",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    832,
+    560
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "direct-telegram-condition",
+       "leftValue": "={{ $json.provider }}",
+       "rightValue": "telegram_direct",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "0ee3e42a-2c57-4ccf-bd36-c186d63d0abc",
+   "name": "Send Telegram Direct",
+   "webhookId": "091d637a-45e5-44f8-8655-d03079f4e131",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "onError": "continueRegularOutput",
+   "position": [
+    1184,
+    560
+   ],
+   "parameters": {
+    "chatId": "={{ $json.telegram_chat_id }}",
+    "text": "={{ $json.content || '' }}",
+    "additionalFields": {
+     "appendAttribution": false
+    }
+   },
+   "credentials": {
+    "telegramApi": {
+     "id": "6cODVuKVshihKizq",
+     "name": "Telegram account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Inbox Outbound Webhook": {
+   "main": [
+    [
+     {
+      "node": "Extract Conversation ID",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Extract Conversation ID": {
+   "main": [
+    [
+     {
+      "node": "Fetch Queued Message",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Fetch Queued Message": {
+   "main": [
+    [
+     {
+      "node": "Build Provider Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Provider Request": {
+   "main": [
+    [
+     {
+      "node": "IF SuperChat Deferred",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Skip": {
+   "main": [
+    [
+     {
+      "node": "Prepare Skipped Response",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "IF Direct Telegram",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send to Provider": {
+   "main": [
+    [
+     {
+      "node": "Validate Provider Acceptance",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Update Message Status": {
+   "main": [
+    [
+     {
+      "node": "Prepare OK Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare OK Response": {
+   "main": [
+    [
+     {
+      "node": "Respond to Webhook",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Skipped Response": {
+   "main": [
+    [
+     {
+      "node": "Respond to Webhook",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF SuperChat Deferred": {
+   "main": [
+    [
+     {
+      "node": "Find SuperChat Contact Deferred",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Check Skip",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find SuperChat Contact Deferred": {
+   "main": [
+    [
+     {
+      "node": "Build SuperChat Provider Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build SuperChat Provider Request": {
+   "main": [
+    [
+     {
+      "node": "Check SuperChat Skip",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check SuperChat Skip": {
+   "main": [
+    [
+     {
+      "node": "Prepare Skipped Response",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Send SuperChat Deferred Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send SuperChat Deferred Reply": {
+   "main": [
+    [
+     {
+      "node": "Validate Provider Acceptance",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Validate Provider Acceptance": {
+   "main": [
+    [
+     {
+      "node": "Update Message Status",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Direct Telegram": {
+   "main": [
+    [
+     {
+      "node": "Send Telegram Direct",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Send to Provider",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send Telegram Direct": {
+   "main": [
+    [
+     {
+      "node": "Validate Provider Acceptance",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "19uCr1CLZ3QHrqPM",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:09.276Z",
+   "updatedAt": "2026-09-22T19:25:09.276Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "5362f130-6ec3-45d2-82b4-a801f71097a4",
+  "workflowId": "19uCr1CLZ3QHrqPM",
+  "nodes": [
+   {
+    "id": "ab53ef89-6d32-4bf8-a54b-6a653d2fbd2a",
+    "name": "Inbox Outbound Webhook",
+    "webhookId": "eeb2d3a3-2fcd-403b-b2d0-a1ea346e45e1",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -304,
+     544
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "inbox-outbound",
+     "authentication": "headerAuth",
+     "responseMode": "responseNode",
+     "options": {}
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "cK3Q2aKzyXTJoCFX",
+      "name": "Header Auth account"
+     }
+    }
+   },
+   {
+    "id": "cf29828e-6d66-41e8-8214-26d812097826",
+    "name": "Extract Conversation ID",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     -80,
+     544
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "conv-id",
+        "name": "conversation_id",
+        "value": "={{ $json.body.conversation_id }}",
+        "type": "string"
+       },
+       {
+        "id": "message-id",
+        "name": "message_id",
+        "value": "={{ $json.body.message_id }}",
+        "type": "string"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "90fdfa9b-efdd-4f70-9773-b99371274ba4",
+    "name": "Fetch Queued Message",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     144,
+     544
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT m.id AS message_id, m.conversation_id, m.content,\n       c.clinic_id, c.channel_id, c.patient_id,\n       c.channel_conversation_id,\n       ch.provider, ch.type, ch.config AS channel_config,\n       ch.phone_number_id, ch.business_account_id,\n       ch.provider AS eff_provider,\n       COALESCE(cs.api_token, NULL) AS api_token,\n       ch.phone_number_id AS gupshup_source,\n       COALESCE(cs.tenant_identifier, NULL) AS tenant_identifier,\n       COALESCE(p.phone_normalized, p.phone) AS recipient\nFROM messages m\nJOIN conversations c ON c.id = m.conversation_id\nJOIN channels ch ON ch.id = c.channel_id\nLEFT JOIN get_channel_secret_db(ch.id) cs ON true\nLEFT JOIN patients p ON p.id = c.patient_id\nWHERE m.id = COALESCE(NULLIF($1::text, '')::uuid, (\n  SELECT id FROM messages\n  WHERE conversation_id = $2::uuid\n    AND direction = 'outgoing'\n    AND sender_type IN ('ai', 'clinic')\n    AND message_status = 'sent'\n  ORDER BY created_at DESC LIMIT 1\n))\n  AND m.conversation_id = $2::uuid\n  AND m.direction = 'outgoing'\n  AND m.message_status IN ('sent','delivered')\nLIMIT 1;\n",
+     "options": {
+      "queryReplacement": "={{ [$(\"Extract Conversation ID\").first().json.message_id || \"\", $(\"Extract Conversation ID\").first().json.conversation_id] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "fcd488b6-6973-4e62-9a13-25a92d7c1e03",
+    "name": "Build Provider Request",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     368,
+     544
+    ],
+    "parameters": {
+     "jsCode": "const row = $input.first().json || {};\nif (!row.message_id) return [{ json: { skip: true, reason: 'no_queued_message' } }];\nif (String(row.message_status || '').toLowerCase() === 'delivered') return [{ json: { skip: true, reason: 'already_delivered', message_id: row.message_id } }];\nconst provider = String(row.eff_provider || row.provider || 'thikaa').toLowerCase();\nconst channelType = String(row.type || 'whatsapp').toLowerCase();\nconst isDirectTelegram = channelType === 'telegram' && provider !== 'meta' && provider !== 'superchat';\nconst recipient = String(row.recipient || '').trim();\nif (!recipient && !isDirectTelegram) return [{ json: { skip: true, reason: 'no_recipient', message_id: row.message_id } }];\nconst content = String(row.content || '').slice(0, 4000);\nconst cfg = row.channel_config && typeof row.channel_config === 'object' ? row.channel_config : {};\nconst superchatApiKey = String(cfg.superchat_api_key || '').trim();\nconst superchatChannelId = String(cfg.superchat_channel_id || '').trim();\nlet sendUrl = '', authHeader = '', body = {};\nif (isDirectTelegram) {\n  const telegramChatId = String(row.channel_conversation_id || '').trim();\n  if (!telegramChatId) return [{ json: { skip: true, reason: 'missing_telegram_chat_id', message_id: row.message_id, provider: 'telegram_direct', channelType } }];\n  return [{ json: {\n    sendUrl: '',\n    authHeader: '',\n    body: { chat_id: telegramChatId, text: content },\n    message_id: row.message_id,\n    provider: 'telegram_direct',\n    channelType,\n    telegram_chat_id: telegramChatId,\n    content,\n    skip: false,\n  } }];\n} else if (provider === 'thikaa') {\n  const codeMap = { whatsapp: 'wd', messenger: 'fb', instagram: 'ig', telegram: 'tg' };\n  body = { channel: codeMap[channelType] || 'wd', to: recipient, message: content };\n  sendUrl = 'https://thikaa.com/' + (row.tenant_identifier || '') + '/api/messaging/?action=send';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'meta' && channelType === 'whatsapp') {\n  body = { channel: 'whatsapp', source: String(row.gupshup_source || ''), destination: recipient, messageType: { type: 'text', text: content } };\n  sendUrl = 'https://api.gupshup.io/wa/api/v1/msg';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'meta' && (channelType === 'instagram' || channelType === 'messenger')) {\n  const pid = cfg.meta_phone_number_id || cfg.phone_number_id || '';\n  body = { messaging_product: channelType === 'instagram' ? 'instagram' : 'RESPONSE', to: recipient, text: { body: content } };\n  sendUrl = channelType === 'instagram' ? 'https://graph.facebook.com/v21.0/me/messages' : 'https://graph.facebook.com/v21.0/' + pid + '/messages';\n  authHeader = 'Bearer ' + (row.api_token || '');\n} else if (provider === 'superchat' && superchatApiKey && superchatChannelId) {\n  return [{ json: { skip: false, needs_superchat_contact: true, message_id: row.message_id, content, recipient, superchat_api_key: superchatApiKey, superchat_channel_id: superchatChannelId, provider, channelType } }];\n} else {\n  return [{ json: { skip: true, reason: 'unsupported_provider_or_missing_channel_config', provider, channelType, message_id: row.message_id } }];\n}\nreturn [{ json: { sendUrl, authHeader, body, message_id: row.message_id, provider, channelType, content, skip: false } }];\n"
+    }
+   },
+   {
+    "id": "73aaaf4d-5369-403e-bccb-a877a977a9e6",
+    "name": "Check Skip",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     720,
+     -16
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "skip-cond",
+        "leftValue": "={{ $json.skip }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "9a55f5ce-7e12-44a0-8452-490f70e5c610",
+    "name": "Send to Provider",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     784,
+     784
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.sendUrl }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "Authorization",
+        "value": "={{ $json.authHeader }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.body) }}",
+     "options": {
+      "timeout": 20000
+     }
+    }
+   },
+   {
+    "id": "fce899d9-0667-42b6-bfe4-5b85251b855a",
+    "name": "Update Message Status",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1312,
+     880
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE messages\nSET message_status = CASE WHEN $1::boolean THEN 'delivered' ELSE 'failed' END\nWHERE id = $2::uuid\nRETURNING id AS message_id, message_status;\n",
+     "options": {
+      "queryReplacement": "={{ [$json.provider_acceptance_verified === true, $(\"Build Provider Request\").first().json.message_id] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "81634c81-ff85-4eb3-a326-aa16fd14c7d6",
+    "name": "Prepare OK Response",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1520,
+     880
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "rt",
+        "name": "responseText",
+        "value": "ok",
+        "type": "string"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "81d57b39-5ae0-444c-a284-a2ce327f599c",
+    "name": "Prepare Skipped Response",
+    "type": "n8n-nodes-base.set",
+    "typeVersion": 3.4,
+    "position": [
+     1488,
+     64
+    ],
+    "parameters": {
+     "assignments": {
+      "assignments": [
+       {
+        "id": "rt",
+        "name": "responseText",
+        "value": "=skipped: {{ $json.reason }}",
+        "type": "string"
+       }
+      ]
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "a8a4d1ca-c647-4446-881f-8302d0f0405f",
+    "name": "Respond to Webhook",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1952,
+     496
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "={{ $json.responseText }}",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "f1e82bf2-4f9c-47fd-9ef7-c6a4eb2d4235",
+    "name": "IF SuperChat Deferred",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     496,
+     384
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      },
+      "conditions": [
+       {
+        "id": "k2-superchat-condition",
+        "leftValue": "={{ $json.needs_superchat_contact === true }}",
+        "operator": {
+         "operation": "true",
+         "singleValue": true,
+         "type": "boolean"
+        },
+        "rightValue": true
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "19eb546a-cc26-461e-b4a5-facd95614573",
+    "name": "Find SuperChat Contact Deferred",
+    "disabled": true,
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.5,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     704,
+     368
+    ],
+    "parameters": {
+     "url": "={{ 'https://api.superchat.com/v1.0/contacts?channel_id=' + $('Build Provider Request').first().json.superchat_channel_id }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "X-API-KEY",
+        "value": "={{ $('Build Provider Request').first().json.superchat_api_key }}"
+       }
+      ]
+     },
+     "options": {
+      "timeout": 20000
+     }
+    }
+   },
+   {
+    "id": "a3442bb1-432b-4f28-93fe-d5ef95f6852c",
+    "name": "Build SuperChat Provider Request",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     944,
+     384
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const base = $('Build Provider Request').first().json || {};\nconst results = Array.isArray($json.results) ? $json.results : [];\nconst target = String(base.recipient || '').trim();\nlet contactId = null;\nfor (const contact of results) {\n  for (const handle of (Array.isArray(contact?.handles) ? contact.handles : [])) {\n    if (String(handle?.value || '').trim() === target) { contactId = contact.id || null; break; }\n  }\n  if (contactId) break;\n}\nif (!contactId) return [{ json: { ...base, skip: true, reason: 'no_matching_superchat_contact', message_id: base.message_id } }];\nconst sendUrl = 'https://api.superchat.com/v1.0/messages';\nif (!/^https:\\/\\/api\\.superchat\\.com\\//i.test(sendUrl)) {\n  return [{ json: { ...base, skip: true, reason: 'provider_host_not_allowlisted', message_id: base.message_id } }];\n}\nreturn [{ json: { ...base, skip: false, sendUrl, apiKeyHeader: base.superchat_api_key, body: { to: [{ identifier: contactId }], from: { channel_id: base.superchat_channel_id }, content: { type: 'text', body: base.content } }, message_id: base.message_id } }];"
+    }
+   },
+   {
+    "id": "31efb2d9-da2a-47b6-afac-c09699f61550",
+    "name": "Check SuperChat Skip",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1216,
+     384
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      },
+      "conditions": [
+       {
+        "id": "k2-superchat-skip",
+        "leftValue": "={{ $json.skip }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "ec8312a7-cac4-4b90-9051-97ea7be96c94",
+    "name": "Send SuperChat Deferred Reply",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.5,
+    "retryOnFail": false,
+    "position": [
+     1440,
+     608
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "={{ $json.sendUrl }}",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "X-API-KEY",
+        "value": "={{ $json.apiKeyHeader }}"
+       },
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.body) }}",
+     "options": {
+      "timeout": 20000
+     }
+    }
+   },
+   {
+    "id": "ad51f2ad-9f25-4fef-8623-c940a49468f9",
+    "name": "Validate Provider Acceptance",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1088,
+     880
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const rawInput = $json || {};\nconst req = $('Build Provider Request').first().json || {};\nconst provider = String(req.provider || '').toLowerCase();\nconst channelType = String(req.channelType || '').toLowerCase();\nconst decodeJsonText = (value) => {\n  if (typeof value !== 'string') return value;\n  const text = value.trim();\n  if (!text) return text;\n  try { return JSON.parse(text); } catch (e) { return text; }\n};\nconst decoded = decodeJsonText(rawInput);\nconst response = decoded && typeof decoded === 'object' && decoded.body !== undefined\n  ? decodeJsonText(decoded.body)\n  : decoded;\nlet accepted = false;\nlet evidence = 'http_2xx_only';\nif (provider === 'telegram_direct' && channelType === 'telegram') {\n  const telegramMessageId = Number(response?.result?.message_id ?? response?.message_id ?? 0);\n  accepted = response?.ok === true || telegramMessageId > 0;\n  evidence = accepted ? 'telegram_api_ok_message_id' : 'telegram_acceptance_unverified';\n} else if (provider === 'meta' && channelType === 'whatsapp') {\n  accepted = response && response.status === 'submitted' && typeof response.messageId === 'string' && response.messageId.trim().length > 0;\n  evidence = accepted ? 'gupshup_submitted_messageId' : 'gupshup_acceptance_unverified';\n} else if (provider === 'thikaa' || provider === 'superchat' || provider === 'meta') {\n  accepted = true;\n}\nif (!accepted) throw new Error('provider_acceptance_not_verified');\nreturn { json: { ...(decoded && typeof decoded === 'object' ? decoded : {}), provider_acceptance_verified: true, provider_acceptance_evidence: evidence, message_id: req.message_id } };\n"
+    }
+   },
+   {
+    "id": "af6cf951-3d0b-44de-93ca-9f5fc60e7b4f",
+    "name": "IF Direct Telegram",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     832,
+     560
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "direct-telegram-condition",
+        "leftValue": "={{ $json.provider }}",
+        "rightValue": "telegram_direct",
+        "operator": {
+         "type": "string",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "0ee3e42a-2c57-4ccf-bd36-c186d63d0abc",
+    "name": "Send Telegram Direct",
+    "webhookId": "091d637a-45e5-44f8-8655-d03079f4e131",
+    "type": "n8n-nodes-base.telegram",
+    "typeVersion": 1.2,
+    "onError": "continueRegularOutput",
+    "position": [
+     1184,
+     560
+    ],
+    "parameters": {
+     "chatId": "={{ $json.telegram_chat_id }}",
+     "text": "={{ $json.content || '' }}",
+     "additionalFields": {
+      "appendAttribution": false
+     }
+    },
+    "credentials": {
+     "telegramApi": {
+      "id": "6cODVuKVshihKizq",
+      "name": "Telegram account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Inbox Outbound Webhook": {
+    "main": [
+     [
+      {
+       "node": "Extract Conversation ID",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Extract Conversation ID": {
+    "main": [
+     [
+      {
+       "node": "Fetch Queued Message",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Fetch Queued Message": {
+    "main": [
+     [
+      {
+       "node": "Build Provider Request",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build Provider Request": {
+    "main": [
+     [
+      {
+       "node": "IF SuperChat Deferred",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Skip": {
+    "main": [
+     [
+      {
+       "node": "Prepare Skipped Response",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "IF Direct Telegram",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send to Provider": {
+    "main": [
+     [
+      {
+       "node": "Validate Provider Acceptance",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Update Message Status": {
+    "main": [
+     [
+      {
+       "node": "Prepare OK Response",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare OK Response": {
+    "main": [
+     [
+      {
+       "node": "Respond to Webhook",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare Skipped Response": {
+    "main": [
+     [
+      {
+       "node": "Respond to Webhook",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF SuperChat Deferred": {
+    "main": [
+     [
+      {
+       "node": "Find SuperChat Contact Deferred",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Check Skip",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find SuperChat Contact Deferred": {
+    "main": [
+     [
+      {
+       "node": "Build SuperChat Provider Request",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build SuperChat Provider Request": {
+    "main": [
+     [
+      {
+       "node": "Check SuperChat Skip",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check SuperChat Skip": {
+    "main": [
+     [
+      {
+       "node": "Prepare Skipped Response",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Send SuperChat Deferred Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send SuperChat Deferred Reply": {
+    "main": [
+     [
+      {
+       "node": "Validate Provider Acceptance",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Validate Provider Acceptance": {
+    "main": [
+     [
+      {
+       "node": "Update Message Status",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF Direct Telegram": {
+    "main": [
+     [
+      {
+       "node": "Send Telegram Direct",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Send to Provider",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send Telegram Direct": {
+    "main": [
+     [
+      {
+       "node": "Validate Provider Acceptance",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:12:47.685Z",
+  "updatedAt": "2026-09-22T20:12:47.685Z",
+  "workflowPublishHistory": [
+   {
+    "id": 60,
+    "workflowId": "19uCr1CLZ3QHrqPM",
+    "versionId": "5362f130-6ec3-45d2-82b4-a801f71097a4",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:12:47.719Z"
+   }
+  ]
+ }
+}

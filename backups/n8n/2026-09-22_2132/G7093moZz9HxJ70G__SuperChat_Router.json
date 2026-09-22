@@ -1,0 +1,832 @@
+{
+ "id": "G7093moZz9HxJ70G",
+ "name": "SuperChat Router",
+ "description": null,
+ "active": true,
+ "activeVersionId": "8f14ed02-c8bc-4584-8d58-4925136a2a5e",
+ "createdAt": "2026-09-22T19:25:17.133Z",
+ "updatedAt": "2026-09-22T20:13:08.261Z",
+ "isArchived": false,
+ "versionId": "8f14ed02-c8bc-4584-8d58-4925136a2a5e",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "1118a05d-eb80-4843-8bb0-e78193b82aff",
+   "name": "Parse SuperChat Router",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -160,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Pass-through: keep the ORIGINAL SuperChat payload intact\n// so downstream workflows receive the real webhook body.\n// Also extract event type + channel_id so we can route to the\n// correct channel-specific workflow instead of broadcasting to all.\nconst body = $json.body || {};\nconst event = body.event || '';\nconst channelId = (body.message && body.message.to && body.message.to.channel_id) || null;\n\nreturn [{\n  json: {\n    body: body,\n    router_event: event,\n    router_channel_id: channelId\n  }\n}];"
+   }
+  },
+  {
+   "id": "d51c30ca-2d09-4b55-8f7d-5de34b2705d8",
+   "name": "Respond OK Router",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    80,
+    0
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "8a19db43-2244-4049-b81b-34be494cb75f",
+   "name": "Forward to WhatsApp WF",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    960,
+    40
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-whatsapp-webhook",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.body) }}",
+    "options": {
+     "timeout": 5000
+    }
+   }
+  },
+  {
+   "id": "91b8151d-a27b-44e7-97be-cfee8e129aaf",
+   "name": "Forward to Instagram WF",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    960,
+    -320
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-instagram-webhook",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.body) }}",
+    "options": {
+     "timeout": 5000
+    }
+   }
+  },
+  {
+   "id": "2bbe0065-4e62-4cb9-b856-e41d56de0ecb",
+   "name": "Forward to Messenger WF",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    960,
+    -140
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-messenger-webhook",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.body) }}",
+    "options": {
+     "timeout": 5000
+    }
+   }
+  },
+  {
+   "id": "d3f75097-9edc-416f-a076-f88350b5d397",
+   "name": "Sendiee Router Webhook",
+   "webhookId": "cfdf481f-b82e-42a5-90d3-fb369b7a514c",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -400,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "sendiee-router",
+    "responseMode": "responseNode",
+    "options": {
+     "rawBody": true
+    }
+   }
+  },
+  {
+   "id": "f1f806c7-6849-464f-bd1f-146b80ff6668",
+   "name": "Is Real Message Router",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    280,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "c1",
+       "leftValue": "={{ $json.router_event }}",
+       "operator": {
+        "operation": "equals",
+        "type": "string"
+       },
+       "rightValue": "message_inbound"
+      },
+      {
+       "id": "c2",
+       "leftValue": "={{ $json.router_channel_id }}",
+       "operator": {
+        "operation": "notEmpty",
+        "singleValue": true,
+        "type": "string"
+       },
+       "rightValue": ""
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "889d07a7-3001-404a-9496-18f8e3a033f7",
+   "name": "Lookup Channel Type Router",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    520,
+    -140
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.router_channel_id ] }}"
+    },
+    "query": "SELECT type\nFROM channels\nWHERE provider = 'superchat'\n  AND status = 'connected'\n  AND is_enabled = true\n  AND config->>'superchat_channel_id' = $1\nLIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "48ab044a-4bf1-41b9-97d5-e75dfbbda7c9",
+   "name": "Route By Channel Type",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.4,
+   "position": [
+    740,
+    -140
+   ],
+   "parameters": {
+    "mode": "rules",
+    "options": {
+     "fallbackOutput": "none"
+    },
+    "rules": {
+     "values": [
+      {
+       "conditions": {
+        "combinator": "and",
+        "conditions": [
+         {
+          "leftValue": "={{ $json.type }}",
+          "operator": {
+           "operation": "equals",
+           "type": "string"
+          },
+          "rightValue": "instagram"
+         }
+        ],
+        "options": {
+         "caseSensitive": false,
+         "leftValue": "",
+         "typeValidation": "strict"
+        }
+       },
+       "outputKey": "instagram"
+      },
+      {
+       "conditions": {
+        "combinator": "and",
+        "conditions": [
+         {
+          "leftValue": "={{ $json.type }}",
+          "operator": {
+           "operation": "equals",
+           "type": "string"
+          },
+          "rightValue": "messenger"
+         }
+        ],
+        "options": {
+         "caseSensitive": false,
+         "leftValue": "",
+         "typeValidation": "strict"
+        }
+       },
+       "outputKey": "messenger"
+      },
+      {
+       "conditions": {
+        "combinator": "and",
+        "conditions": [
+         {
+          "leftValue": "={{ $json.type }}",
+          "operator": {
+           "operation": "equals",
+           "type": "string"
+          },
+          "rightValue": "whatsapp"
+         }
+        ],
+        "options": {
+         "caseSensitive": false,
+         "leftValue": "",
+         "typeValidation": "strict"
+        }
+       },
+       "outputKey": "whatsapp"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Parse SuperChat Router": {
+   "main": [
+    [
+     {
+      "node": "Respond OK Router",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sendiee Router Webhook": {
+   "main": [
+    [
+     {
+      "node": "Parse SuperChat Router",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Respond OK Router": {
+   "main": [
+    [
+     {
+      "node": "Is Real Message Router",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Real Message Router": {
+   "main": [
+    [
+     {
+      "node": "Lookup Channel Type Router",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Forward to WhatsApp WF",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Forward to Instagram WF",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Forward to Messenger WF",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lookup Channel Type Router": {
+   "main": [
+    [
+     {
+      "node": "Route By Channel Type",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Route By Channel Type": {
+   "main": [
+    [
+     {
+      "node": "Forward to Instagram WF",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Forward to Messenger WF",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Forward to WhatsApp WF",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "G7093moZz9HxJ70G",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:17.133Z",
+   "updatedAt": "2026-09-22T19:25:17.133Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "8f14ed02-c8bc-4584-8d58-4925136a2a5e",
+  "workflowId": "G7093moZz9HxJ70G",
+  "nodes": [
+   {
+    "id": "1118a05d-eb80-4843-8bb0-e78193b82aff",
+    "name": "Parse SuperChat Router",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -160,
+     0
+    ],
+    "parameters": {
+     "jsCode": "// Pass-through: keep the ORIGINAL SuperChat payload intact\n// so downstream workflows receive the real webhook body.\n// Also extract event type + channel_id so we can route to the\n// correct channel-specific workflow instead of broadcasting to all.\nconst body = $json.body || {};\nconst event = body.event || '';\nconst channelId = (body.message && body.message.to && body.message.to.channel_id) || null;\n\nreturn [{\n  json: {\n    body: body,\n    router_event: event,\n    router_channel_id: channelId\n  }\n}];"
+    }
+   },
+   {
+    "id": "d51c30ca-2d09-4b55-8f7d-5de34b2705d8",
+    "name": "Respond OK Router",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     80,
+     0
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "8a19db43-2244-4049-b81b-34be494cb75f",
+    "name": "Forward to WhatsApp WF",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     960,
+     40
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-whatsapp-webhook",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.body) }}",
+     "options": {
+      "timeout": 5000
+     }
+    }
+   },
+   {
+    "id": "91b8151d-a27b-44e7-97be-cfee8e129aaf",
+    "name": "Forward to Instagram WF",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     960,
+     -320
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-instagram-webhook",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.body) }}",
+     "options": {
+      "timeout": 5000
+     }
+    }
+   },
+   {
+    "id": "2bbe0065-4e62-4cb9-b856-e41d56de0ecb",
+    "name": "Forward to Messenger WF",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     960,
+     -140
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://n8n-production-33955.up.railway.app/webhook/superchat-messenger-webhook",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($json.body) }}",
+     "options": {
+      "timeout": 5000
+     }
+    }
+   },
+   {
+    "id": "d3f75097-9edc-416f-a076-f88350b5d397",
+    "name": "Sendiee Router Webhook",
+    "webhookId": "cfdf481f-b82e-42a5-90d3-fb369b7a514c",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -400,
+     0
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "sendiee-router",
+     "responseMode": "responseNode",
+     "options": {
+      "rawBody": true
+     }
+    }
+   },
+   {
+    "id": "f1f806c7-6849-464f-bd1f-146b80ff6668",
+    "name": "Is Real Message Router",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     280,
+     0
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "c1",
+        "leftValue": "={{ $json.router_event }}",
+        "operator": {
+         "operation": "equals",
+         "type": "string"
+        },
+        "rightValue": "message_inbound"
+       },
+       {
+        "id": "c2",
+        "leftValue": "={{ $json.router_channel_id }}",
+        "operator": {
+         "operation": "notEmpty",
+         "singleValue": true,
+         "type": "string"
+        },
+        "rightValue": ""
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "889d07a7-3001-404a-9496-18f8e3a033f7",
+    "name": "Lookup Channel Type Router",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     520,
+     -140
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.router_channel_id ] }}"
+     },
+     "query": "SELECT type\nFROM channels\nWHERE provider = 'superchat'\n  AND status = 'connected'\n  AND is_enabled = true\n  AND config->>'superchat_channel_id' = $1\nLIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "48ab044a-4bf1-41b9-97d5-e75dfbbda7c9",
+    "name": "Route By Channel Type",
+    "type": "n8n-nodes-base.switch",
+    "typeVersion": 3.4,
+    "position": [
+     740,
+     -140
+    ],
+    "parameters": {
+     "mode": "rules",
+     "options": {
+      "fallbackOutput": "none"
+     },
+     "rules": {
+      "values": [
+       {
+        "conditions": {
+         "combinator": "and",
+         "conditions": [
+          {
+           "leftValue": "={{ $json.type }}",
+           "operator": {
+            "operation": "equals",
+            "type": "string"
+           },
+           "rightValue": "instagram"
+          }
+         ],
+         "options": {
+          "caseSensitive": false,
+          "leftValue": "",
+          "typeValidation": "strict"
+         }
+        },
+        "outputKey": "instagram"
+       },
+       {
+        "conditions": {
+         "combinator": "and",
+         "conditions": [
+          {
+           "leftValue": "={{ $json.type }}",
+           "operator": {
+            "operation": "equals",
+            "type": "string"
+           },
+           "rightValue": "messenger"
+          }
+         ],
+         "options": {
+          "caseSensitive": false,
+          "leftValue": "",
+          "typeValidation": "strict"
+         }
+        },
+        "outputKey": "messenger"
+       },
+       {
+        "conditions": {
+         "combinator": "and",
+         "conditions": [
+          {
+           "leftValue": "={{ $json.type }}",
+           "operator": {
+            "operation": "equals",
+            "type": "string"
+           },
+           "rightValue": "whatsapp"
+          }
+         ],
+         "options": {
+          "caseSensitive": false,
+          "leftValue": "",
+          "typeValidation": "strict"
+         }
+        },
+        "outputKey": "whatsapp"
+       }
+      ]
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Parse SuperChat Router": {
+    "main": [
+     [
+      {
+       "node": "Respond OK Router",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Sendiee Router Webhook": {
+    "main": [
+     [
+      {
+       "node": "Parse SuperChat Router",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Respond OK Router": {
+    "main": [
+     [
+      {
+       "node": "Is Real Message Router",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Real Message Router": {
+    "main": [
+     [
+      {
+       "node": "Lookup Channel Type Router",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Forward to WhatsApp WF",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Forward to Instagram WF",
+       "type": "main",
+       "index": 0
+      },
+      {
+       "node": "Forward to Messenger WF",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Lookup Channel Type Router": {
+    "main": [
+     [
+      {
+       "node": "Route By Channel Type",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Route By Channel Type": {
+    "main": [
+     [
+      {
+       "node": "Forward to Instagram WF",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Forward to Messenger WF",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Forward to WhatsApp WF",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:08.263Z",
+  "updatedAt": "2026-09-22T20:13:08.263Z",
+  "workflowPublishHistory": [
+   {
+    "id": 70,
+    "workflowId": "G7093moZz9HxJ70G",
+    "versionId": "8f14ed02-c8bc-4584-8d58-4925136a2a5e",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:08.295Z"
+   }
+  ]
+ }
+}

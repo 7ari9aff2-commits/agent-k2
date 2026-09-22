@@ -1,0 +1,2192 @@
+{
+ "id": "H5lUReLvZZgDUSYb",
+ "name": "WhatsApp Production - Gupshup",
+ "description": null,
+ "active": true,
+ "activeVersionId": "3bb5cbb3-386d-449e-a275-4485e07acce0",
+ "createdAt": "2026-09-22T19:25:10.173Z",
+ "updatedAt": "2026-09-22T20:13:09.989Z",
+ "isArchived": false,
+ "versionId": "3bb5cbb3-386d-449e-a275-4485e07acce0",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "c392d530-6c26-4449-8a94-e035c9dbf04a",
+   "name": "Webhook Receive GUPSHUP",
+   "webhookId": "bcda9e53-2a4b-4593-ac2f-d2ee078d25d2",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2,
+   "position": [
+    -2736,
+    80
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "gupshup-webhook",
+    "responseMode": "responseNode",
+    "options": {
+     "rawBody": true
+    }
+   }
+  },
+  {
+   "id": "1baabe95-40e3-4881-8174-2491d1f335f1",
+   "name": "Verify GUPSHUP Signature",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -2464,
+    80
+   ],
+   "parameters": {
+    "jsCode": "// Gupshup enterprise webhooks ممكن تبعت X-Gupshup-Auth header\n// لكن بما إن التوكن ثابت ومش هنسجله في header، نتحقق من وجود header\n// ونتحقق إن الـ body فيها app='meruna2' — وده كافي كـ sanity check\n// (Gupshup ما بتبعتش HMAC signature زي ثيكا)\n\nconst body = $json.body || {};\nconst appId = (body.app || '').toString().toLowerCase();\n\nlet valid = appId === 'meruna2' || appId === 'gupshup' || appId.includes('meruna');\n\nlet parsedBody = {};\ntry { parsedBody = JSON.parse($json.rawBodyString || JSON.stringify(body)); } catch(e) { parsedBody = body; }\n\nreturn [{ json: { signature_valid: valid, body: parsedBody } }];"
+   }
+  },
+  {
+   "id": "f3fbb846-e840-4744-8153-1497bafe93f6",
+   "name": "Signature Valid? GUPSHUP",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -2256,
+    80
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "47d23e46-2633-491c-84d4-3e5d4d2dd7bc",
+       "leftValue": "={{ $json.signature_valid }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "ea1c430f-0f9b-4ae8-b341-aeaaf16c2fb5",
+   "name": "Reject - Invalid Signature GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -2256,
+    368
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+    "options": {
+     "responseCode": 401
+    }
+   }
+  },
+  {
+   "id": "80e66a3b-e286-4699-a01b-2ea646a6d1e7",
+   "name": "Parse GUPSHUP Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -1968,
+    64
+   ],
+   "parameters": {
+    "jsCode": "// Gupshup inbound webhook payload format:\n// {\"app\":\"meruna2\",\"timestamp\":1718007189549,\"version\":2,\"type\":\"message\",\n//  \"payload\":{\"id\":\"ABEG...\",\"source\":\"91XXXXX4\",\"type\":\"text\",\n//    \"payload\":{\"text\":\"Hi\"},\n//    \"sender\":{\"phone\":\"91XXXXX4\",\"name\":\"SJ\",\"country_code\":\"91\",\"dial_code\":\"9XXXXX4\"}}}\n\nconst body = $json.body || {};\n\nconsole.log('RAW GUPSHUP BODY:', JSON.stringify(body, null, 2));\n\n// Gupshup ممكن تبعت status events (delivered, read, failed...) — نتجاهلها\nif (body.type !== 'message') {\n  return [{ json: { is_status_update: true, event: body.type || null, raw_body: body } }];\n}\n\nconst p = body.payload || {};\nconst sender = p.sender || {};\nconst innerPayload = p.payload || {};\nconst channelPatientId = p.source || sender.phone || null;\nconst messageText = innerPayload.text || (p.type === 'text' && innerPayload.text) || null;\n\nconst messageType = p.type || 'text';\n\nconst messageId = p.id || null;\nconst appId = body.app || null;\n\n// مفتاح فريد لمنع المعالجة المكررة لو Gupshup عملت retry\nconst idempotencyKey = (appId && messageId) ? `gupshup_wa_${appId}_${messageId}` : null;\n\nif (!channelPatientId || !messageText) {\n  return [{ json: { is_status_update: true, raw_body: body } }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId),\n    patient_name: sender.name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: 'whatsapp',\n    provider_app_id: appId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+   }
+  },
+  {
+   "id": "9bf9f1aa-5c92-43b6-be47-7ea9f76183e3",
+   "name": "Log Webhook GUPSHUP",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -1712,
+    64
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+    },
+    "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('gupshup', $1, $2::jsonb, 'pending', now(), 'gupshup_wa_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "c32a7384-21ac-471c-9f62-d01271007f09",
+   "name": "Check Not Duplicate GUPSHUP",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1456,
+    64
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "920fa91c-a279-4d19-8ce3-d33e32bca4be",
+       "leftValue": "={{ $json.is_new }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "5646279c-de3f-4a5e-b259-5946648e138e",
+   "name": "Respond Duplicate GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1504,
+    448
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "DUPLICATE_IGNORED",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "e0cf72f1-4923-4356-9b91-8fcbfef16a70",
+   "name": "Is Real Message? GUPSHUP",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -1168,
+    48
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "eed48b3a-4193-4687-8bce-b1995f5f8d09",
+       "leftValue": "={{ $('Parse GUPSHUP Message').item.json.is_status_update }}",
+       "rightValue": false,
+       "operator": {
+        "type": "boolean",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "2477c8f2-7531-493f-be8b-dd276aff3c46",
+   "name": "Ignore - Status Update GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -1232,
+    464
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "b095c67c-4a81-4dfa-8282-3ce2654add65",
+   "name": "Is GUPSHUP Channel?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -848,
+    32
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "19097c3a-c4b4-4fb9-a7e1-bbf954cf8bdc",
+       "leftValue": "={{ $('Parse GUPSHUP Message').item.json.channel_code }}",
+       "rightValue": "whatsapp",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "dd8936fa-f272-4ef5-ad05-28748007a7f2",
+   "name": "Reject - Wrong Channel GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -944,
+    464
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+    "options": {
+     "responseCode": 400
+    }
+   }
+  },
+  {
+   "id": "ef018665-4f74-4268-a5b2-13158e2eda9e",
+   "name": "Lookup Clinic ID GUPSHUP",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -480,
+    16
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT c.id AS clinic_id, ch.id AS channel_id, ch.config->>'gupshup_source_number' AS gupshup_source_number\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'gupshup'\n  AND ch.type = 'whatsapp'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND c.deleted_at IS NULL\n  AND ch.deleted_at IS NULL\n  AND ch.config->>'gupshup_app_id' = $1\nLIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [ String($('Parse GUPSHUP Message').item.json.provider_app_id || 'meruna2') ] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "d0a5195a-9a8f-47f1-b4e0-c2df66c0c7ff",
+   "name": "Check Clinic Found GUPSHUP",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2,
+   "position": [
+    -240,
+    16
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 1
+     },
+     "conditions": [
+      {
+       "id": "04992877-7d3e-4cfd-950e-d5727bd84535",
+       "leftValue": "={{ $json.clinic_id }}",
+       "rightValue": "",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "493298c2-8a6f-4c2c-9fb8-d7f2bb455b27",
+   "name": "Merge Clinic With Message GUPSHUP",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const message = $('Parse GUPSHUP Message').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null,\n    gupshup_source_number: clinicLookup.gupshup_source_number || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "d62b0962-c532-40a1-ae58-2c7a7a042d53",
+   "name": "Get Channel Secret GUPSHUP",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    80,
+    160
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $json.channel_id ] }}"
+    },
+    "query": "SELECT COALESCE(cs.provider, c.provider) AS provider, cs.api_token AS api_token, cs.signing_secret AS signing_secret, cs.tenant_identifier AS tenant_identifier\nFROM channels c\nLEFT JOIN get_channel_secret_db(c.id) cs ON true\nWHERE c.id = $1::uuid"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "c050e781-19f4-402e-a490-d898238a47c7",
+   "name": "Merge Channel Secret GUPSHUP",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    288,
+    160
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message GUPSHUP').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    gupshup_api_key: secretResult.api_token || null,\n    thikaa_signing_secret: secretResult.signing_secret || null,\n    thikaa_tenant_identifier: secretResult.tenant_identifier || null\n  }\n}];"
+   }
+  },
+  {
+   "id": "e5346c5c-b393-4cf4-8706-e9e36ea94d0b",
+   "name": "Find Or Create Patient GUPSHUP",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    224,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $json.clinic_id,\n  p_phone: $json.channel_patient_id,\n  p_channel_type: 'whatsapp',\n  p_channel_patient_id: $json.channel_patient_id,\n  p_full_name: $json.patient_name\n}) }}",
+    "options": {
+     "timeout": 10000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth"
+   },
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "p2J79GLR4o6Yonjo",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "id": "154bed72-faf1-4cbf-b684-6f6f49cdf990",
+   "name": "Merge Patient Data GUPSHUP",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    432,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Clinic With Message GUPSHUP').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+   }
+  },
+  {
+   "id": "de97101e-fa96-4999-afa4-d9eeb9eff36f",
+   "name": "Get Or Create Conversation GUPSHUP",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    688,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/get_or_create_channel_conversation",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({p_clinic_id:$json.clinic_id,p_patient_id:$json.patient_id,p_channel_id:$json.channel_id,p_channel_conversation_id:$json.channel_patient_id}) }}",
+    "options": {
+     "timeout": 10000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpCustomAuth"
+   },
+   "credentials": {
+    "httpCustomAuth": {
+     "id": "p2J79GLR4o6Yonjo",
+     "name": "Custom Auth account"
+    }
+   }
+  },
+  {
+   "id": "37b67813-8cb7-4d34-a1ce-73ce4951e621",
+   "name": "Merge Conversation Data GUPSHUP",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    336,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const original = $('Merge Patient Data GUPSHUP').item.json;\nconst convResult = $input.item.json;\n\nlet conversationId = null;\nlet channelId = null;\n\nif (convResult.conversation_id) {\n    conversationId = convResult.conversation_id;\n    channelId = convResult.channel_id || null;\n} else if (convResult.result && convResult.result.conversation_id) {\n    conversationId = convResult.result.conversation_id;\n    channelId = convResult.result.channel_id || null;\n} else if (Array.isArray(convResult) && convResult.length > 0) {\n    conversationId = convResult[0].conversation_id || convResult[0].result?.conversation_id || null;\n    channelId = convResult[0].channel_id || convResult[0].result?.channel_id || null;\n} else if (convResult.data && Array.isArray(convResult.data) && convResult.data.length > 0) {\n    conversationId = convResult.data[0].conversation_id || convResult.data[0].result?.conversation_id || null;\n    channelId = convResult.data[0].channel_id || convResult.data[0].result?.channel_id || null;\n}\n\nif (!conversationId) {\n    console.error('No conversation_id found:', JSON.stringify(convResult, null, 2));\n    throw new Error('Failed to get conversation_id from RPC response');\n}\n\nif (!channelId) {\n    channelId = original.channel_id || null;\n}\n\nreturn [{\n    json: {\n        ...original,\n        conversation_id: conversationId,\n        channel_id: channelId\n    }\n}];"
+   }
+  },
+  {
+   "id": "6c06af08-06b1-4ce6-b24f-e7c54349d6de",
+   "name": "Respond OK GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    1488,
+    400
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "EVENT_RECEIVED",
+    "options": {}
+   }
+  },
+  {
+   "id": "4ab76f32-5ada-41fb-9138-7c5186648e45",
+   "name": "Call Core Engine GUPSHUP",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 800,
+   "onError": "continueErrorOutput",
+   "position": [
+    608,
+    368
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      },
+      {
+       "name": "X-K2-Signature",
+       "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+    "options": {
+     "timeout": 180000
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "50c178bf-8575-4e37-94ae-9edaca7311eb",
+   "name": "IF Core Engine Handoff Suppressed (GUPSHUP)",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    848,
+    368
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "bf220e69-5f91-464e-ae02-67881c956e91",
+       "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+       "operator": {
+        "operation": "true",
+        "singleValue": true,
+        "type": "boolean"
+       },
+       "rightValue": true
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "1d693ea8-7104-4f67-a2a1-c1f576630f9e",
+   "name": "Prepare GUPSHUP Reply",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    864,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse GUPSHUP Message').item.json.channel_patient_id || null;\n    } catch (e) { console.log('Could not get from Parse'); }\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+   }
+  },
+  {
+   "id": "92ab1f52-7828-4a63-81a7-c4ba02f61951",
+   "name": "Send GUPSHUP Reply",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1088,
+    368
+   ],
+   "parameters": {
+    "bodyParameters": {
+     "parameters": [
+      {
+       "name": "channel",
+       "value": "whatsapp"
+      },
+      {
+       "name": "source",
+       "value": "={{ $('Merge Clinic With Message GUPSHUP').item.json.gupshup_source_number || '201107731857' }}"
+      },
+      {
+       "name": "destination",
+       "value": "={{ $json.thikaa_recipient }}"
+      },
+      {
+       "name": "message",
+       "value": "={{ JSON.stringify({ type: 'text', text: $json.thikaa_message }) }}"
+      }
+     ]
+    },
+    "contentType": "form-urlencoded",
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "apikey",
+       "value": "={{ $('Merge Channel Secret GUPSHUP').item.json.gupshup_api_key || '' }}"
+      }
+     ]
+    },
+    "method": "POST",
+    "options": {
+     "timeout": 15000
+    },
+    "sendBody": true,
+    "sendHeaders": true,
+    "url": "https://api.gupshup.io/wa/api/v1/msg"
+   }
+  },
+  {
+   "id": "a217b5e9-d3b9-4286-a62b-5c0dd3d5d5c8",
+   "name": "Mark Webhook Processed GUPSHUP",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    1264,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Merge Conversation Data GUPSHUP').item.json.clinic_id, $('Merge Conversation Data GUPSHUP').item.json.channel_id, $('Log Webhook GUPSHUP').item.json.id, $('Parse GUPSHUP Message').item.json.idempotency_key ] }}"
+    },
+    "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "2e580513-c93c-4a82-901e-0bc26a282b63",
+   "name": "Log Unknown Instance GUPSHUP",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    -272,
+    384
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ $('Log Webhook GUPSHUP').item.json.id ] }}"
+    },
+    "query": "UPDATE webhook_logs\nSET status = 'ignored', error_message = 'unknown_or_disabled_channel'\nWHERE id = $1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "84ad8c08-ef00-4084-b0d3-13999b3bf33a",
+   "name": "Respond Unknown Instance GUPSHUP",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.1,
+   "position": [
+    -48,
+    384
+   ],
+   "parameters": {
+    "respondWith": "text",
+    "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  },
+  {
+   "id": "59eccfb0-d570-4f54-9c09-514b01d65105",
+   "name": "Build K2 Signed Core Envelope",
+   "notesInFlow": true,
+   "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    388,
+    368
+   ],
+   "parameters": {
+    "jsCode": "const src = $('Merge Conversation Data GUPSHUP').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'whatsapp',\n  channel_provider: 'gupshup',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    whatsapp_phone: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    gupshup_app_id: src.provider_app_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+   }
+  },
+  {
+   "id": "6b6d6662-634e-43cb-a479-dd447aeb07b5",
+   "name": "Compute K2 HMAC Signature",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.5,
+   "position": [
+    498,
+    368
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "options": {
+     "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+    },
+    "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Webhook Receive GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Verify GUPSHUP Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify GUPSHUP Signature": {
+   "main": [
+    [
+     {
+      "node": "Signature Valid? GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Signature Valid? GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Parse GUPSHUP Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Invalid Signature GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse GUPSHUP Message": {
+   "main": [
+    [
+     {
+      "node": "Log Webhook GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Webhook GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Check Not Duplicate GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Not Duplicate GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Is Real Message? GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond Duplicate GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Real Message? GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Is GUPSHUP Channel?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Ignore - Status Update GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is GUPSHUP Channel?": {
+   "main": [
+    [
+     {
+      "node": "Lookup Clinic ID GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Reject - Wrong Channel GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lookup Clinic ID GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Check Clinic Found GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Clinic Found GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Merge Clinic With Message GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Log Unknown Instance GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Log Unknown Instance GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Respond Unknown Instance GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Clinic With Message GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Get Channel Secret GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Channel Secret GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Merge Channel Secret GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Channel Secret GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Find Or Create Patient GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Or Create Patient GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Merge Patient Data GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Patient Data GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Get Or Create Conversation GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Or Create Conversation GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Merge Conversation Data GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Merge Conversation Data GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Respond OK GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Respond OK GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "Build K2 Signed Core Envelope",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call Core Engine GUPSHUP": {
+   "main": [
+    [
+     {
+      "node": "IF Core Engine Handoff Suppressed (GUPSHUP)",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare GUPSHUP Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Core Engine Handoff Suppressed (GUPSHUP)": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare GUPSHUP Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare GUPSHUP Reply": {
+   "main": [
+    [
+     {
+      "node": "Send GUPSHUP Reply",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send GUPSHUP Reply": {
+   "main": [
+    [
+     {
+      "node": "Mark Webhook Processed GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build K2 Signed Core Envelope": {
+   "main": [
+    [
+     {
+      "node": "Compute K2 HMAC Signature",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Compute K2 HMAC Signature": {
+   "main": [
+    [
+     {
+      "node": "Call Core Engine GUPSHUP",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "H5lUReLvZZgDUSYb",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:10.173Z",
+   "updatedAt": "2026-09-22T19:25:10.173Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "3bb5cbb3-386d-449e-a275-4485e07acce0",
+  "workflowId": "H5lUReLvZZgDUSYb",
+  "nodes": [
+   {
+    "id": "c392d530-6c26-4449-8a94-e035c9dbf04a",
+    "name": "Webhook Receive GUPSHUP",
+    "webhookId": "bcda9e53-2a4b-4593-ac2f-d2ee078d25d2",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2,
+    "position": [
+     -2736,
+     80
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "gupshup-webhook",
+     "responseMode": "responseNode",
+     "options": {
+      "rawBody": true
+     }
+    }
+   },
+   {
+    "id": "1baabe95-40e3-4881-8174-2491d1f335f1",
+    "name": "Verify GUPSHUP Signature",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -2464,
+     80
+    ],
+    "parameters": {
+     "jsCode": "// Gupshup enterprise webhooks ممكن تبعت X-Gupshup-Auth header\n// لكن بما إن التوكن ثابت ومش هنسجله في header، نتحقق من وجود header\n// ونتحقق إن الـ body فيها app='meruna2' — وده كافي كـ sanity check\n// (Gupshup ما بتبعتش HMAC signature زي ثيكا)\n\nconst body = $json.body || {};\nconst appId = (body.app || '').toString().toLowerCase();\n\nlet valid = appId === 'meruna2' || appId === 'gupshup' || appId.includes('meruna');\n\nlet parsedBody = {};\ntry { parsedBody = JSON.parse($json.rawBodyString || JSON.stringify(body)); } catch(e) { parsedBody = body; }\n\nreturn [{ json: { signature_valid: valid, body: parsedBody } }];"
+    }
+   },
+   {
+    "id": "f3fbb846-e840-4744-8153-1497bafe93f6",
+    "name": "Signature Valid? GUPSHUP",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -2256,
+     80
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "47d23e46-2633-491c-84d4-3e5d4d2dd7bc",
+        "leftValue": "={{ $json.signature_valid }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "ea1c430f-0f9b-4ae8-b341-aeaaf16c2fb5",
+    "name": "Reject - Invalid Signature GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -2256,
+     368
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"invalid_signature\"}",
+     "options": {
+      "responseCode": 401
+     }
+    }
+   },
+   {
+    "id": "80e66a3b-e286-4699-a01b-2ea646a6d1e7",
+    "name": "Parse GUPSHUP Message",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     -1968,
+     64
+    ],
+    "parameters": {
+     "jsCode": "// Gupshup inbound webhook payload format:\n// {\"app\":\"meruna2\",\"timestamp\":1718007189549,\"version\":2,\"type\":\"message\",\n//  \"payload\":{\"id\":\"ABEG...\",\"source\":\"91XXXXX4\",\"type\":\"text\",\n//    \"payload\":{\"text\":\"Hi\"},\n//    \"sender\":{\"phone\":\"91XXXXX4\",\"name\":\"SJ\",\"country_code\":\"91\",\"dial_code\":\"9XXXXX4\"}}}\n\nconst body = $json.body || {};\n\nconsole.log('RAW GUPSHUP BODY:', JSON.stringify(body, null, 2));\n\n// Gupshup ممكن تبعت status events (delivered, read, failed...) — نتجاهلها\nif (body.type !== 'message') {\n  return [{ json: { is_status_update: true, event: body.type || null, raw_body: body } }];\n}\n\nconst p = body.payload || {};\nconst sender = p.sender || {};\nconst innerPayload = p.payload || {};\nconst channelPatientId = p.source || sender.phone || null;\nconst messageText = innerPayload.text || (p.type === 'text' && innerPayload.text) || null;\n\nconst messageType = p.type || 'text';\n\nconst messageId = p.id || null;\nconst appId = body.app || null;\n\n// مفتاح فريد لمنع المعالجة المكررة لو Gupshup عملت retry\nconst idempotencyKey = (appId && messageId) ? `gupshup_wa_${appId}_${messageId}` : null;\n\nif (!channelPatientId || !messageText) {\n  return [{ json: { is_status_update: true, raw_body: body } }];\n}\n\nreturn [{\n  json: {\n    is_status_update: false,\n    channel_patient_id: String(channelPatientId),\n    patient_name: sender.name || null,\n    message_text: messageText,\n    message_type: messageType,\n    channel_code: 'whatsapp',\n    provider_app_id: appId,\n    message_id: messageId,\n    idempotency_key: idempotencyKey,\n    raw_body: body\n  }\n}];"
+    }
+   },
+   {
+    "id": "9bf9f1aa-5c92-43b6-be47-7ea9f76183e3",
+    "name": "Log Webhook GUPSHUP",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -1712,
+     64
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.idempotency_key, JSON.stringify($json.raw_body) ] }}"
+     },
+     "query": "INSERT INTO webhook_logs (provider, idempotency_key, payload, status, received_at, workflow_version)\nVALUES ('gupshup', $1, $2::jsonb, 'pending', now(), 'gupshup_wa_v1')\nON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL\nDO UPDATE SET id = webhook_logs.id\nRETURNING id, (xmax = 0) AS is_new;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "c32a7384-21ac-471c-9f62-d01271007f09",
+    "name": "Check Not Duplicate GUPSHUP",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1456,
+     64
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "920fa91c-a279-4d19-8ce3-d33e32bca4be",
+        "leftValue": "={{ $json.is_new }}",
+        "rightValue": true,
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "5646279c-de3f-4a5e-b259-5946648e138e",
+    "name": "Respond Duplicate GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1504,
+     448
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "DUPLICATE_IGNORED",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "e0cf72f1-4923-4356-9b91-8fcbfef16a70",
+    "name": "Is Real Message? GUPSHUP",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -1168,
+     48
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      },
+      "conditions": [
+       {
+        "id": "eed48b3a-4193-4687-8bce-b1995f5f8d09",
+        "leftValue": "={{ $('Parse GUPSHUP Message').item.json.is_status_update }}",
+        "rightValue": false,
+        "operator": {
+         "type": "boolean",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "2477c8f2-7531-493f-be8b-dd276aff3c46",
+    "name": "Ignore - Status Update GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -1232,
+     464
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "b095c67c-4a81-4dfa-8282-3ce2654add65",
+    "name": "Is GUPSHUP Channel?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -848,
+     32
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "19097c3a-c4b4-4fb9-a7e1-bbf954cf8bdc",
+        "leftValue": "={{ $('Parse GUPSHUP Message').item.json.channel_code }}",
+        "rightValue": "whatsapp",
+        "operator": {
+         "type": "string",
+         "operation": "equals"
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "dd8936fa-f272-4ef5-ad05-28748007a7f2",
+    "name": "Reject - Wrong Channel GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -944,
+     464
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={\"status\":\"error\",\"reason\":\"unexpected_channel\"}",
+     "options": {
+      "responseCode": 400
+     }
+    }
+   },
+   {
+    "id": "ef018665-4f74-4268-a5b2-13158e2eda9e",
+    "name": "Lookup Clinic ID GUPSHUP",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -480,
+     16
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT c.id AS clinic_id, ch.id AS channel_id, ch.config->>'gupshup_source_number' AS gupshup_source_number\nFROM clinics c\nJOIN channels ch ON ch.clinic_id = c.id\nWHERE ch.provider = 'gupshup'\n  AND ch.type = 'whatsapp'\n  AND ch.status = 'connected'\n  AND ch.is_enabled = true\n  AND c.deleted_at IS NULL\n  AND ch.deleted_at IS NULL\n  AND ch.config->>'gupshup_app_id' = $1\nLIMIT 1;",
+     "options": {
+      "queryReplacement": "={{ [ String($('Parse GUPSHUP Message').item.json.provider_app_id || 'meruna2') ] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "d0a5195a-9a8f-47f1-b4e0-c2df66c0c7ff",
+    "name": "Check Clinic Found GUPSHUP",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2,
+    "position": [
+     -240,
+     16
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 1
+      },
+      "conditions": [
+       {
+        "id": "04992877-7d3e-4cfd-950e-d5727bd84535",
+        "leftValue": "={{ $json.clinic_id }}",
+        "rightValue": "",
+        "operator": {
+         "type": "string",
+         "operation": "notEmpty",
+         "singleValue": true
+        }
+       }
+      ],
+      "combinator": "and"
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "493298c2-8a6f-4c2c-9fb8-d7f2bb455b27",
+    "name": "Merge Clinic With Message GUPSHUP",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     0,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const message = $('Parse GUPSHUP Message').item.json;\nconst clinicLookup = $json;\n\nreturn [{\n  json: {\n    ...message,\n    clinic_id: clinicLookup.clinic_id || null,\n    channel_id: clinicLookup.channel_id || null,\n    gupshup_source_number: clinicLookup.gupshup_source_number || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "d62b0962-c532-40a1-ae58-2c7a7a042d53",
+    "name": "Get Channel Secret GUPSHUP",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     80,
+     160
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $json.channel_id ] }}"
+     },
+     "query": "SELECT COALESCE(cs.provider, c.provider) AS provider, cs.api_token AS api_token, cs.signing_secret AS signing_secret, cs.tenant_identifier AS tenant_identifier\nFROM channels c\nLEFT JOIN get_channel_secret_db(c.id) cs ON true\nWHERE c.id = $1::uuid"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "c050e781-19f4-402e-a490-d898238a47c7",
+    "name": "Merge Channel Secret GUPSHUP",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     288,
+     160
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message GUPSHUP').item.json;\nconst secretResult = $json;\n\nreturn [{\n  json: {\n    ...original,\n    gupshup_api_key: secretResult.api_token || null,\n    thikaa_signing_secret: secretResult.signing_secret || null,\n    thikaa_tenant_identifier: secretResult.tenant_identifier || null\n  }\n}];"
+    }
+   },
+   {
+    "id": "e5346c5c-b393-4cf4-8706-e9e36ea94d0b",
+    "name": "Find Or Create Patient GUPSHUP",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     224,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/find_or_create_patient",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({\n  p_clinic_id: $json.clinic_id,\n  p_phone: $json.channel_patient_id,\n  p_channel_type: 'whatsapp',\n  p_channel_patient_id: $json.channel_patient_id,\n  p_full_name: $json.patient_name\n}) }}",
+     "options": {
+      "timeout": 10000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpCustomAuth"
+    },
+    "credentials": {
+     "httpCustomAuth": {
+      "id": "p2J79GLR4o6Yonjo",
+      "name": "Custom Auth account"
+     }
+    }
+   },
+   {
+    "id": "154bed72-faf1-4cbf-b684-6f6f49cdf990",
+    "name": "Merge Patient Data GUPSHUP",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     432,
+     0
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Clinic With Message GUPSHUP').item.json;\nconst patientResult = $json;\n\nlet patientId = null;\nif (patientResult.data && patientResult.data.length > 0) {\n    patientId = patientResult.data[0].patient_id;\n} else if (patientResult.patient_id) {\n    patientId = patientResult.patient_id;\n} else if (patientResult[0] && patientResult[0].patient_id) {\n    patientId = patientResult[0].patient_id;\n}\n\nif (!patientId) {\n    console.error('No patient_id found:', JSON.stringify(patientResult));\n    throw new Error('Failed to get patient_id from RPC response');\n}\n\nreturn [{\n  json: {\n    ...original,\n    patient_id: patientId\n  }\n}];"
+    }
+   },
+   {
+    "id": "de97101e-fa96-4999-afa4-d9eeb9eff36f",
+    "name": "Get Or Create Conversation GUPSHUP",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     688,
+     0
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://iqemryazzthjgztregjx.supabase.co/rest/v1/rpc/get_or_create_channel_conversation",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({p_clinic_id:$json.clinic_id,p_patient_id:$json.patient_id,p_channel_id:$json.channel_id,p_channel_conversation_id:$json.channel_patient_id}) }}",
+     "options": {
+      "timeout": 10000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpCustomAuth"
+    },
+    "credentials": {
+     "httpCustomAuth": {
+      "id": "p2J79GLR4o6Yonjo",
+      "name": "Custom Auth account"
+     }
+    }
+   },
+   {
+    "id": "37b67813-8cb7-4d34-a1ce-73ce4951e621",
+    "name": "Merge Conversation Data GUPSHUP",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     336,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const original = $('Merge Patient Data GUPSHUP').item.json;\nconst convResult = $input.item.json;\n\nlet conversationId = null;\nlet channelId = null;\n\nif (convResult.conversation_id) {\n    conversationId = convResult.conversation_id;\n    channelId = convResult.channel_id || null;\n} else if (convResult.result && convResult.result.conversation_id) {\n    conversationId = convResult.result.conversation_id;\n    channelId = convResult.result.channel_id || null;\n} else if (Array.isArray(convResult) && convResult.length > 0) {\n    conversationId = convResult[0].conversation_id || convResult[0].result?.conversation_id || null;\n    channelId = convResult[0].channel_id || convResult[0].result?.channel_id || null;\n} else if (convResult.data && Array.isArray(convResult.data) && convResult.data.length > 0) {\n    conversationId = convResult.data[0].conversation_id || convResult.data[0].result?.conversation_id || null;\n    channelId = convResult.data[0].channel_id || convResult.data[0].result?.channel_id || null;\n}\n\nif (!conversationId) {\n    console.error('No conversation_id found:', JSON.stringify(convResult, null, 2));\n    throw new Error('Failed to get conversation_id from RPC response');\n}\n\nif (!channelId) {\n    channelId = original.channel_id || null;\n}\n\nreturn [{\n    json: {\n        ...original,\n        conversation_id: conversationId,\n        channel_id: channelId\n    }\n}];"
+    }
+   },
+   {
+    "id": "6c06af08-06b1-4ce6-b24f-e7c54349d6de",
+    "name": "Respond OK GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     1488,
+     400
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "EVENT_RECEIVED",
+     "options": {}
+    }
+   },
+   {
+    "id": "4ab76f32-5ada-41fb-9138-7c5186648e45",
+    "name": "Call Core Engine GUPSHUP",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 800,
+    "onError": "continueErrorOutput",
+    "position": [
+     608,
+     368
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+     "sendHeaders": true,
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "name": "X-K2-Signature",
+        "value": "={{ 'sha256=' + String($('Compute K2 HMAC Signature').item.json.signature || '') }}"
+       }
+      ]
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}) }}",
+     "options": {
+      "timeout": 180000
+     },
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth"
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "SO91NTrTgX172Ew9",
+      "name": "K2 Internal Core Engine Auth"
+     }
+    }
+   },
+   {
+    "id": "50c178bf-8575-4e37-94ae-9edaca7311eb",
+    "name": "IF Core Engine Handoff Suppressed (GUPSHUP)",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     848,
+     368
+    ],
+    "parameters": {
+     "conditions": {
+      "combinator": "and",
+      "conditions": [
+       {
+        "id": "bf220e69-5f91-464e-ae02-67881c956e91",
+        "leftValue": "={{ $json.suppress_reply === true || $json.body?.suppress_reply === true || $json.duplicate === true || $json.message === 'already_processed' || $json.body?.message === 'already_processed' }}",
+        "operator": {
+         "operation": "true",
+         "singleValue": true,
+         "type": "boolean"
+        },
+        "rightValue": true
+       }
+      ],
+      "options": {
+       "caseSensitive": true,
+       "leftValue": "",
+       "typeValidation": "strict",
+       "version": 2
+      }
+     },
+     "options": {}
+    }
+   },
+   {
+    "id": "1d693ea8-7104-4f67-a2a1-c1f576630f9e",
+    "name": "Prepare GUPSHUP Reply",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     864,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const data = $input.item.json;\n\nlet replyText = data.reply_text ||\n                data.response ||\n                data.message ||\n                data.answer ||\n                data.body ||\n                data.output ||\n                data.result ||\n                null;\n\nif (!replyText || replyText.trim() === '') {\n    replyText = 'عذراً، حصلت مشكلة في معالجة طلبك. حاول مرة أخرى 🙏';\n}\n\nif (replyText.length > 4000) {\n    replyText = replyText.substring(0, 4000) + '...';\n}\n\nlet patientId = data.channel_patient_id || data.to || data.recipient || null;\n\nif (!patientId) {\n    try {\n        patientId = $('Parse GUPSHUP Message').item.json.channel_patient_id || null;\n    } catch (e) { console.log('Could not get from Parse'); }\n}\n\nreturn [{\n    json: {\n        ...data,\n        thikaa_recipient: patientId,\n        thikaa_message: replyText\n    }\n}];"
+    }
+   },
+   {
+    "id": "92ab1f52-7828-4a63-81a7-c4ba02f61951",
+    "name": "Send GUPSHUP Reply",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "position": [
+     1088,
+     368
+    ],
+    "parameters": {
+     "bodyParameters": {
+      "parameters": [
+       {
+        "name": "channel",
+        "value": "whatsapp"
+       },
+       {
+        "name": "source",
+        "value": "={{ $('Merge Clinic With Message GUPSHUP').item.json.gupshup_source_number || '201107731857' }}"
+       },
+       {
+        "name": "destination",
+        "value": "={{ $json.thikaa_recipient }}"
+       },
+       {
+        "name": "message",
+        "value": "={{ JSON.stringify({ type: 'text', text: $json.thikaa_message }) }}"
+       }
+      ]
+     },
+     "contentType": "form-urlencoded",
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "apikey",
+        "value": "={{ $('Merge Channel Secret GUPSHUP').item.json.gupshup_api_key || '' }}"
+       }
+      ]
+     },
+     "method": "POST",
+     "options": {
+      "timeout": 15000
+     },
+     "sendBody": true,
+     "sendHeaders": true,
+     "url": "https://api.gupshup.io/wa/api/v1/msg"
+    }
+   },
+   {
+    "id": "a217b5e9-d3b9-4286-a62b-5c0dd3d5d5c8",
+    "name": "Mark Webhook Processed GUPSHUP",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     1264,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Merge Conversation Data GUPSHUP').item.json.clinic_id, $('Merge Conversation Data GUPSHUP').item.json.channel_id, $('Log Webhook GUPSHUP').item.json.id, $('Parse GUPSHUP Message').item.json.idempotency_key ] }}"
+     },
+     "query": "UPDATE webhook_logs\nSET status = 'processed',\n    clinic_id = $1,\n    channel_id = $2,\n    processing_time_ms = EXTRACT(EPOCH FROM (now() - received_at)) * 1000\nWHERE id = $3\n  AND status = 'pending'\n  AND clinic_id IS NULL\n  AND channel_id IS NULL\n  AND idempotency_key = $4\nRETURNING id;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "2e580513-c93c-4a82-901e-0bc26a282b63",
+    "name": "Log Unknown Instance GUPSHUP",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     -272,
+     384
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ $('Log Webhook GUPSHUP').item.json.id ] }}"
+     },
+     "query": "UPDATE webhook_logs\nSET status = 'ignored', error_message = 'unknown_or_disabled_channel'\nWHERE id = $1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "84ad8c08-ef00-4084-b0d3-13999b3bf33a",
+    "name": "Respond Unknown Instance GUPSHUP",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.1,
+    "position": [
+     -48,
+     384
+    ],
+    "parameters": {
+     "respondWith": "text",
+     "responseBody": "IGNORED_UNKNOWN_INSTANCE",
+     "options": {
+      "responseCode": 200
+     }
+    }
+   },
+   {
+    "id": "59eccfb0-d570-4f54-9c09-514b01d65105",
+    "name": "Build K2 Signed Core Envelope",
+    "notesInFlow": true,
+    "notes": "Creates an HMAC over the exact internal core envelope using the channel signing secret; never emits the secret.",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     388,
+     368
+    ],
+    "parameters": {
+     "jsCode": "const src = $('Merge Conversation Data GUPSHUP').item.json || {};\nconst core_payload = {\n  clinic_id: src.clinic_id || null,\n  channel_type: 'whatsapp',\n  channel_provider: 'gupshup',\n  channel_id: src.channel_id || null,\n  patient_id: src.patient_id || null,\n  conversation_id: src.conversation_id || null,\n  message_text: src.message_text || '',\n  message_id: src.message_id || null,\n  source_event_id: src.idempotency_key || src.message_id || null,\n  metadata: {\n    whatsapp_phone: src.channel_patient_id || null,\n    message_type: src.message_type || 'text',\n    gupshup_app_id: src.provider_app_id || null\n  }\n};\nreturn [{ json: { ...src, core_payload } }];"
+    }
+   },
+   {
+    "id": "6b6d6662-634e-43cb-a479-dd447aeb07b5",
+    "name": "Compute K2 HMAC Signature",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.5,
+    "position": [
+     498,
+     368
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "options": {
+      "queryReplacement": "={{ [ JSON.stringify($('Build K2 Signed Core Envelope').item.json.core_payload || {}), String($('Build K2 Signed Core Envelope').item.json.channel_id) ] }}"
+     },
+     "query": "SELECT encode(extensions.hmac($1::text, secret.signing_secret, 'sha256'), 'hex') AS signature FROM public.get_channel_secret_db($2::uuid) AS secret WHERE secret.signing_secret IS NOT NULL LIMIT 1;"
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Webhook Receive GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Verify GUPSHUP Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Verify GUPSHUP Signature": {
+    "main": [
+     [
+      {
+       "node": "Signature Valid? GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Signature Valid? GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Parse GUPSHUP Message",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Invalid Signature GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Parse GUPSHUP Message": {
+    "main": [
+     [
+      {
+       "node": "Log Webhook GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Webhook GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Check Not Duplicate GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Not Duplicate GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Is Real Message? GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Respond Duplicate GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is Real Message? GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Is GUPSHUP Channel?",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Ignore - Status Update GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Is GUPSHUP Channel?": {
+    "main": [
+     [
+      {
+       "node": "Lookup Clinic ID GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Reject - Wrong Channel GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Lookup Clinic ID GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Check Clinic Found GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Check Clinic Found GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Merge Clinic With Message GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Log Unknown Instance GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Log Unknown Instance GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Respond Unknown Instance GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Clinic With Message GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Get Channel Secret GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Channel Secret GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Merge Channel Secret GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Channel Secret GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Find Or Create Patient GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Find Or Create Patient GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Merge Patient Data GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Patient Data GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Get Or Create Conversation GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Get Or Create Conversation GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Merge Conversation Data GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Merge Conversation Data GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Respond OK GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Respond OK GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "Build K2 Signed Core Envelope",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Call Core Engine GUPSHUP": {
+    "main": [
+     [
+      {
+       "node": "IF Core Engine Handoff Suppressed (GUPSHUP)",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare GUPSHUP Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "IF Core Engine Handoff Suppressed (GUPSHUP)": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare GUPSHUP Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare GUPSHUP Reply": {
+    "main": [
+     [
+      {
+       "node": "Send GUPSHUP Reply",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send GUPSHUP Reply": {
+    "main": [
+     [
+      {
+       "node": "Mark Webhook Processed GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Build K2 Signed Core Envelope": {
+    "main": [
+     [
+      {
+       "node": "Compute K2 HMAC Signature",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Compute K2 HMAC Signature": {
+    "main": [
+     [
+      {
+       "node": "Call Core Engine GUPSHUP",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:09.991Z",
+  "updatedAt": "2026-09-22T20:13:09.991Z",
+  "workflowPublishHistory": [
+   {
+    "id": 72,
+    "workflowId": "H5lUReLvZZgDUSYb",
+    "versionId": "3bb5cbb3-386d-449e-a275-4485e07acce0",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:10.041Z"
+   }
+  ]
+ }
+}

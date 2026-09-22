@@ -1,0 +1,221 @@
+{
+ "id": "9pdnBe1XObCCtb6m",
+ "name": "MERUNA / Reminders / Appointment Reminder Central",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:11.783Z",
+ "updatedAt": "2026-09-22T20:12:57.361Z",
+ "isArchived": false,
+ "versionId": "a101b1d4-88e7-4c88-8db9-0016652bc527",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "83780686-8125-41a1-82b3-8b1a61184fab",
+   "name": "Every Five Minutes",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    -1376,
+    0
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "bd65c4d3-9344-472a-81a1-05d9fc8d146b",
+   "name": "Find Reminder Policy Candidates",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -688,
+    -336
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT e.id AS source_event_id, e.clinic_id, e.appointment_id AS appointment_id,\n       a.patient_id, p.id AS policy_id, a.scheduled_at,\n       a.scheduled_at + make_interval(mins => p.offset_minutes) AS scheduled_for,\n       'appointment:' || a.id::text || ':policy:' || p.id::text || ':v' || p.version::text AS window_key,\n       e.correlation_id\nFROM public.notification_domain_events e\nJOIN public.appointments a ON a.id=e.appointment_id AND a.clinic_id=e.clinic_id AND a.deleted_at IS NULL\nJOIN public.communication_policies p ON p.clinic_id=e.clinic_id AND p.source_event_type=e.event_type AND p.request_event_type='reminder.requested' AND p.enabled=true\nJOIN public.communication_runtime_config rt ON rt.clinic_id=e.clinic_id AND rt.reminder_mode='LIVE' AND e.occurred_at >= rt.launch_watermark\nWHERE e.event_type IN ('appointment.created','appointment.rescheduled')\n  AND a.appointment_status NOT IN ('cancelled','no_show')\n  AND NOT EXISTS (SELECT 1 FROM public.communication_plan_decisions d WHERE d.source_event_id=e.id AND d.policy_id=p.id AND d.window_key='appointment:' || a.id::text || ':policy:' || p.id::text || ':v' || p.version::text)\nORDER BY e.occurred_at, e.id\nLIMIT 100;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "dfcf6197-d69f-4d98-901a-a9ce213629e0",
+   "name": "Plan Reminder Decisions",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -464,
+    -336
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.communication_plan_decision(\n  '{{$json.source_event_id}}'::uuid,\n  '{{$json.policy_id}}'::uuid,\n  '{{$json.appointment_id}}'::uuid,\n  '{{$json.patient_id}}'::uuid,\n  '{{$json.scheduled_for}}'::timestamptz,\n  '{{$json.window_key}}'::text,\n  NULL::text,\n  {{ $json.correlation_id ? \"'\" + $json.correlation_id + \"'\" : \"NULL\" }}::uuid,\n  '{}'::jsonb\n) AS decision;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "a6711e61-0a6b-45b0-9cdd-cb27cdf462bd",
+   "name": "Emit Reminder Notification Request",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -224,
+    -336
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.communication_emit_notification_request('{{$json.decision.decision_id}}'::uuid) AS request;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "5c9eac5f-5551-4a73-9e71-2d70d0ea4bbb",
+   "name": "Find Cancellation Events",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -544,
+    -48
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT e.id AS source_event_id, e.clinic_id, e.appointment_id AS appointment_id\nFROM public.notification_domain_events e\nJOIN public.communication_runtime_config rt ON rt.clinic_id=e.clinic_id AND rt.reminder_mode='LIVE' AND e.occurred_at >= rt.launch_watermark\nWHERE e.event_type IN ('appointment.cancelled','appointment.rescheduled')\nORDER BY e.occurred_at, e.id\nLIMIT 100;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "6fe1c65b-5283-4fdc-baf7-82548beb3685",
+   "name": "Suppress Future Communication",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -256,
+    -48
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.communication_suppress_appointment('{{$json.clinic_id}}'::uuid,'{{$json.appointment_id}}'::uuid,'{{$json.source_event_id}}'::uuid,'BUSINESS_APPOINTMENT_CHANGE') AS suppressed;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Every Five Minutes": {
+   "main": [
+    [
+     {
+      "node": "Find Reminder Policy Candidates",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Find Cancellation Events",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Reminder Policy Candidates": {
+   "main": [
+    [
+     {
+      "node": "Plan Reminder Decisions",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Plan Reminder Decisions": {
+   "main": [
+    [
+     {
+      "node": "Emit Reminder Notification Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Cancellation Events": {
+   "main": [
+    [
+     {
+      "node": "Suppress Future Communication",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "9pdnBe1XObCCtb6m",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:11.783Z",
+   "updatedAt": "2026-09-22T19:25:11.783Z"
+  }
+ ],
+ "activeVersion": null
+}

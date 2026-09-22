@@ -1,0 +1,1556 @@
+{
+ "id": "L1o7819MfEuuntZK",
+ "name": "K2 Inbox Outbound Telegram",
+ "description": null,
+ "active": true,
+ "activeVersionId": "efa19885-5aa0-4e86-8d24-85e50f79a5fc",
+ "createdAt": "2026-09-22T19:25:12.342Z",
+ "updatedAt": "2026-09-22T20:13:16.222Z",
+ "isArchived": false,
+ "versionId": "efa19885-5aa0-4e86-8d24-85e50f79a5fc",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 1,
+ "nodes": [
+  {
+   "id": "2325ad59-ffc3-43aa-a4be-4400bccbd528",
+   "name": "Inbox Outbound Telegram Webhook",
+   "webhookId": "743e8d3b-8cc4-43b2-8ac8-a5bed0b7f415",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    240,
+    300
+   ],
+   "parameters": {
+    "httpMethod": "POST",
+    "path": "inbox/outbound-telegram",
+    "authentication": "headerAuth",
+    "responseMode": "responseNode",
+    "options": {
+     "allowedOrigins": ""
+    }
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "lT1r1WYEih2o6rc6",
+     "name": "K2 Inbox Outbound Token"
+    }
+   }
+  },
+  {
+   "id": "f2ce5e98-89b0-4e13-b6aa-01feb5fe0e53",
+   "name": "Normalize Inbox Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    500,
+    300
+   ],
+   "parameters": {
+    "jsCode": "const b=$json.body&&typeof $json.body==='object'?$json.body:{};const authorized=true;const action=String(b.action||'').trim().toLowerCase();const text=String(b.message_text||b.message||b.text||'').trim();const cid=String(b.client_message_id||b.clientMessageId||'').trim();return {json:{authorized,auth_method:'n8n_header_auth',action,clinic_id:String(b.clinic_id||'').trim(),conversation_id:String(b.conversation_id||'').trim(),patient_id:String(b.patient_id||'').trim(),channel_id:String(b.channel_id||'').trim(),staff_user_id:String(b.staff_user_id||'').trim(),message_text:text,client_message_id:cid,correlation_id:String(b.correlation_id||b.correlationId||cid||'').trim(),resolution_note:String(b.resolution_note||'').trim(),valid:['takeover','release','send_message'].includes(action)&&(action!=='send_message'||Boolean(text&&cid))}}",
+    "mode": "runOnceForEachItem"
+   }
+  },
+  {
+   "id": "fbd5d0f8-529e-461c-8bf0-2779aafee31c",
+   "name": "Inbox Request Valid?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    760,
+    300
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $json.valid === true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       },
+       "rightValue": true
+      }
+     ],
+     "combinator": "and"
+    }
+   }
+  },
+  {
+   "id": "16c4a3c7-6b3f-471f-b419-d1e1a273d18f",
+   "name": "Route Inbox Action",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.2,
+   "position": [
+    1000,
+    300
+   ],
+   "parameters": {
+    "rules": {
+     "values": [
+      {
+       "outputKey": "takeover",
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.action }}",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          },
+          "rightValue": "takeover"
+         }
+        ],
+        "combinator": "and"
+       }
+      },
+      {
+       "outputKey": "release",
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.action }}",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          },
+          "rightValue": "release"
+         }
+        ],
+        "combinator": "and"
+       }
+      },
+      {
+       "outputKey": "send_message",
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "typeValidation": "strict"
+        },
+        "conditions": [
+         {
+          "leftValue": "={{ $json.action }}",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          },
+          "rightValue": "send_message"
+         }
+        ],
+        "combinator": "and"
+       }
+      }
+     ]
+    },
+    "options": {
+     "fallbackOutput": "extra",
+     "renameFallbackOutput": "Invalid action"
+    }
+   }
+  },
+  {
+   "id": "27d39834-6928-4093-8b90-8940e0c632ea",
+   "name": "Inbox Takeover RPC",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1240,
+    120
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.rpc_inbox_takeover($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,NULLIF($6::text,'')::uuid) AS response",
+    "options": {
+     "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.channel_id,$json.staff_user_id,$json.correlation_id] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "356c06e5-6863-4801-bb68-986ff40e3b13",
+   "name": "Format Inbox RPC Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1500,
+    220
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const r=$json.response&&typeof $json.response==='object'?$json.response:{};return {json:{response_body:{ok:r.success===true,code:r.code||'DATABASE_ERROR',handoff_id:r.handoff_id||null,conversation_id:r.conversation_id||null,status:r.status||(r.handoff&&r.handoff.status)||null}}}"
+   }
+  },
+  {
+   "id": "448e9a83-442e-4b24-9f15-1e3d9eaf0964",
+   "name": "Respond Inbox Outbound",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.5,
+   "position": [
+    3320,
+    380
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ $json.response_body || { ok: false, code: \"NO_RESPONSE\" } }}",
+    "options": {
+     "responseCode": "={{ $json.response_body && $json.response_body.ok === true ? 200 : 409 }}"
+    }
+   }
+  },
+  {
+   "id": "e7cd2a3a-cd99-4114-a5cf-967af86f6326",
+   "name": "Inbox Release RPC",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1240,
+    300
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.rpc_inbox_release($1::uuid,$2::uuid,$3::uuid,$4::uuid,NULLIF($5::text,'')) AS response",
+    "options": {
+     "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.staff_user_id,$json.resolution_note] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "4e6b8a47-a323-4246-95fe-d112e2799ecd",
+   "name": "Prepare Staff Telegram Send",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1240,
+    540
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH scope AS (SELECT c.id conversation_id,c.clinic_id,c.patient_id,c.channel_id,c.channel_conversation_id channel_patient_id,h.id handoff_id,ch.type,(SELECT s.api_token FROM public.get_channel_secret_db(c.channel_id) s LIMIT 1) token FROM public.conversations c JOIN public.channels ch ON ch.id=c.channel_id AND ch.clinic_id=c.clinic_id AND ch.provider='thikaa' AND lower(ch.type)='telegram' AND ch.status='connected' AND ch.is_enabled=true AND ch.deleted_at IS NULL JOIN public.handoff_requests h ON h.conversation_id=c.id AND h.clinic_id=c.clinic_id AND h.patient_id=c.patient_id AND h.status IN ('REQUESTED','OPEN','ASSIGNED','IN_PROGRESS') AND h.assigned_user_id=$5::uuid WHERE c.id=$2::uuid AND c.clinic_id=$1::uuid AND c.patient_id=$3::uuid AND c.channel_id=$4::uuid AND c.deleted_at IS NULL ORDER BY h.updated_at DESC LIMIT 1),old AS (SELECT status FROM public.webhook_logs WHERE provider='inbox_staff_telegram' AND idempotency_key=$7::text LIMIT 1),reserved AS (INSERT INTO public.webhook_logs(clinic_id,channel_id,provider,idempotency_key,payload,status,received_at,workflow_version,metadata) SELECT s.clinic_id,s.channel_id,'inbox_staff_telegram',$7::text,jsonb_build_object('action','send_message','conversation_id',$2::uuid,'staff_user_id',$5::uuid,'client_message_id',$7::text),'pending',now(),'inbox_outbound_telegram_v1',jsonb_build_object('handoff_id',s.handoff_id) FROM scope s WHERE NOT EXISTS(SELECT 1 FROM old) RETURNING id) SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM scope) THEN 'SCOPE_DENIED' WHEN (SELECT token FROM scope) IS NULL OR btrim((SELECT token FROM scope))='' THEN 'CHANNEL_SECRET_MISSING' WHEN (SELECT status FROM old)='processed' THEN 'DUPLICATE_SENT' WHEN (SELECT status FROM old)='pending' THEN 'IN_PROGRESS' WHEN (SELECT status FROM old)='failed' THEN 'FAILED_PREVIOUS_ATTEMPT' WHEN NOT EXISTS(SELECT 1 FROM reserved) THEN 'RESERVATION_CONFLICT' ELSE 'READY' END send_state,(SELECT conversation_id FROM scope) conversation_id,(SELECT clinic_id FROM scope) clinic_id,(SELECT patient_id FROM scope) patient_id,(SELECT channel_id FROM scope) channel_id,(SELECT channel_patient_id FROM scope) channel_patient_id,(SELECT handoff_id FROM scope) handoff_id,(SELECT token FROM scope) thikaa_api_token,$6::text message_text,$7::text client_message_id,$5::uuid staff_user_id",
+    "options": {
+     "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.channel_id,$json.staff_user_id,$json.message_text,\"inbox-staff:\"+$json.client_message_id] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "934b25c6-ddd7-4558-a017-e37fa96b948a",
+   "name": "Staff Send Ready?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1500,
+    540
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $json.send_state }}",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       },
+       "rightValue": "READY"
+      }
+     ],
+     "combinator": "and"
+    }
+   }
+  },
+  {
+   "id": "72a3d0c2-1e73-4110-a894-72a6512c37c4",
+   "name": "Send Staff Telegram Message",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "retryOnFail": false,
+   "onError": "continueRegularOutput",
+   "position": [
+    1760,
+    480
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://thikaa.com/thik_tenant_hamedadel/api/messaging/?action=send",
+    "sendHeaders": true,
+    "specifyHeaders": "keypair",
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "={{ $json.thikaa_api_token ? \"Bearer \"+$json.thikaa_api_token : \"\" }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/json"
+      }
+     ]
+    },
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ channel: \"tg\", to: $json.channel_patient_id, message: $json.message_text }) }}",
+    "options": {
+     "response": {
+      "fullResponse": true,
+      "neverError": true,
+      "responseFormat": "json"
+     },
+     "timeout": 15000
+    }
+   }
+  },
+  {
+   "id": "1853bfd4-0add-484f-8981-776f77eaaa73",
+   "name": "Restore Staff Send Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2020,
+    480
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const s=$('Prepare Staff Telegram Send').first().json||{};\n// Strip the provider token before it rides into downstream items / execution data.\nconst { thikaa_api_token, ...safe } = s;\nreturn {json:{...safe,provider_response:$json}}"
+   }
+  },
+  {
+   "id": "c0ed7155-7cfa-48c7-85a7-1cdd0f8ba180",
+   "name": "Interpret Telegram Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2280,
+    480
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "const r=$json.provider_response||{};const statusCode=Number(r.statusCode??r.status??0);const b=r.body&&typeof r.body==='object'?r.body:r;const delivery=String(b.delivery||r.delivery||'').trim().toLowerCase();const failed=Boolean(b.error)||b.success===false||b.ok===false||['failed','rejected','error'].includes(delivery);const positive=b.success===true||b.ok===true||['sent','delivered','success'].includes(delivery);const delivered=!failed&&((statusCode>=200&&statusCode<300)||positive);return {json:{...$json,delivered,provider_status_code:statusCode||(positive?200:0),provider_error:b.error||b.message||''}}",
+    "parameters": {
+     "jsCode": "const r=$json.provider_response&&typeof $json.provider_response==='object'?$json.provider_response:{};const c=Number(r.statusCode||r.status||0);const b=r.body&&typeof r.body==='object'?r.body:r;const failed=Boolean(b&&(b.error||b.success===false||b.ok===false));return {json:{...$json,delivered:c>=200&&c<300&&!failed,provider_status_code:c||0,provider_error:failed?String(b.error||b.message||'telegram_provider_rejected'):''}}"
+    }
+   }
+  },
+  {
+   "id": "6551cb2b-51b6-4b85-9604-b98cbe9c0d41",
+   "name": "Telegram Delivery Confirmed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    2540,
+    480
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "typeValidation": "strict"
+     },
+     "conditions": [
+      {
+       "leftValue": "={{ $json.delivered === true }}",
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       },
+       "rightValue": true
+      }
+     ],
+     "combinator": "and"
+    }
+   }
+  },
+  {
+   "id": "c3edc609-8276-4c18-ab2d-d523ece946ae",
+   "name": "Finalize Staff Telegram Success",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    2800,
+    380
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "WITH l AS (UPDATE public.webhook_logs SET status='processed',error_message=NULL,metadata=COALESCE(metadata,'{}'::jsonb)||jsonb_build_object('provider_status_code',$8::integer,'delivered_at',now()) WHERE provider='inbox_staff_telegram' AND idempotency_key=$1::text AND status='pending' RETURNING clinic_id),m AS (INSERT INTO public.messages(id,conversation_id,clinic_id,patient_id,direction,sender_type,content,message_status,received_at,metadata,sent_by_staff_id) SELECT md5($1::text||':message')::uuid,$2::uuid,$3::uuid,$4::uuid,'outgoing','clinic',$5::text,'sent',now(),jsonb_build_object('source','inbox_dashboard','handoff_id',$6::uuid,'client_message_id',$1::text,'provider_status_code',$8::integer),$9::uuid FROM l ON CONFLICT(id) DO NOTHING RETURNING id) UPDATE public.conversations SET last_activity_at=now(),updated_at=now() WHERE id=$2::uuid AND clinic_id=$3::uuid AND patient_id=$4::uuid RETURNING $2::uuid conversation_id,$1::text client_message_id,(SELECT id FROM m) message_id",
+    "options": {
+     "queryReplacement": "={{ [$json.client_message_id,$json.conversation_id,$json.clinic_id,$json.patient_id,$json.message_text,$json.handoff_id,$json.provider_status_code,$json.provider_status_code,$json.staff_user_id] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "8ea473f0-bddf-447c-a841-0618aab241b8",
+   "name": "Format Staff Telegram Success",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3060,
+    380
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return {json:{response_body:{ok:true,code:'STAFF_MESSAGE_SENT',conversation_id:$json.conversation_id||null,message_id:$json.message_id||null,client_message_id:$json.client_message_id||null}}}"
+   }
+  },
+  {
+   "id": "232aac6f-e0ac-49bb-aa93-447f4d028358",
+   "name": "Finalize Staff Telegram Failure",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    2800,
+    600
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "UPDATE public.webhook_logs SET status='failed',error_message=NULLIF($2::text,''),metadata=COALESCE(metadata,'{}'::jsonb)||jsonb_build_object('provider_status_code',$3::integer,'failed_at',now()) WHERE provider='inbox_staff_telegram' AND idempotency_key=$1::text AND status='pending' RETURNING $1::text client_message_id,$3::integer provider_status_code",
+    "options": {
+     "queryReplacement": "={{ [$json.client_message_id,$json.provider_error||\"telegram_delivery_unknown_or_rejected\",$json.provider_status_code||0] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "bec72911-d5a7-4c8b-b454-40b848fc18a2",
+   "name": "Format Staff Telegram Failure",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3060,
+    600
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return {json:{response_body:{ok:false,code:'TELEGRAM_DELIVERY_FAILED',client_message_id:$json.client_message_id||null,provider_status_code:$json.provider_status_code||null}}}"
+   }
+  },
+  {
+   "id": "c7d4775d-5516-4672-bfa8-b6fd4b13aeca",
+   "name": "Format Staff Send Not Ready",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1760,
+    720
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "jsCode": "return {json:{response_body:{ok:false,code:$json.send_state||'SEND_NOT_STARTED',conversation_id:$json.conversation_id||null}}}"
+   }
+  },
+  {
+   "id": "72310455-24b1-4036-9fbc-d4749ed755bc",
+   "name": "Respond Inbox Unauthorized",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.5,
+   "position": [
+    760,
+    40
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { ok: false, code: \"UNAUTHORIZED\" } }}",
+    "options": {
+     "responseCode": 401
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Inbox Outbound Telegram Webhook": {
+   "main": [
+    [
+     {
+      "node": "Normalize Inbox Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Normalize Inbox Request": {
+   "main": [
+    [
+     {
+      "node": "Inbox Request Valid?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Inbox Request Valid?": {
+   "main": [
+    [
+     {
+      "node": "Route Inbox Action",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Respond Inbox Unauthorized",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Route Inbox Action": {
+   "main": [
+    [
+     {
+      "node": "Inbox Takeover RPC",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Inbox Release RPC",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prepare Staff Telegram Send",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Format Staff Send Not Ready",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Inbox Takeover RPC": {
+   "main": [
+    [
+     {
+      "node": "Format Inbox RPC Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Format Inbox RPC Result": {
+   "main": [
+    [
+     {
+      "node": "Respond Inbox Outbound",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Inbox Release RPC": {
+   "main": [
+    [
+     {
+      "node": "Format Inbox RPC Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare Staff Telegram Send": {
+   "main": [
+    [
+     {
+      "node": "Staff Send Ready?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Staff Send Ready?": {
+   "main": [
+    [
+     {
+      "node": "Send Staff Telegram Message",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Format Staff Send Not Ready",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send Staff Telegram Message": {
+   "main": [
+    [
+     {
+      "node": "Restore Staff Send Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Restore Staff Send Context": {
+   "main": [
+    [
+     {
+      "node": "Interpret Telegram Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Interpret Telegram Result": {
+   "main": [
+    [
+     {
+      "node": "Telegram Delivery Confirmed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Telegram Delivery Confirmed?": {
+   "main": [
+    [
+     {
+      "node": "Finalize Staff Telegram Success",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Finalize Staff Telegram Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Finalize Staff Telegram Success": {
+   "main": [
+    [
+     {
+      "node": "Format Staff Telegram Success",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Format Staff Telegram Success": {
+   "main": [
+    [
+     {
+      "node": "Respond Inbox Outbound",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Finalize Staff Telegram Failure": {
+   "main": [
+    [
+     {
+      "node": "Format Staff Telegram Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Format Staff Telegram Failure": {
+   "main": [
+    [
+     {
+      "node": "Respond Inbox Outbound",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Format Staff Send Not Ready": {
+   "main": [
+    [
+     {
+      "node": "Respond Inbox Outbound",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "L1o7819MfEuuntZK",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:12.342Z",
+   "updatedAt": "2026-09-22T19:25:12.342Z"
+  }
+ ],
+ "activeVersion": {
+  "versionId": "efa19885-5aa0-4e86-8d24-85e50f79a5fc",
+  "workflowId": "L1o7819MfEuuntZK",
+  "nodes": [
+   {
+    "id": "2325ad59-ffc3-43aa-a4be-4400bccbd528",
+    "name": "Inbox Outbound Telegram Webhook",
+    "webhookId": "743e8d3b-8cc4-43b2-8ac8-a5bed0b7f415",
+    "type": "n8n-nodes-base.webhook",
+    "typeVersion": 2.1,
+    "position": [
+     240,
+     300
+    ],
+    "parameters": {
+     "httpMethod": "POST",
+     "path": "inbox/outbound-telegram",
+     "authentication": "headerAuth",
+     "responseMode": "responseNode",
+     "options": {
+      "allowedOrigins": ""
+     }
+    },
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "lT1r1WYEih2o6rc6",
+      "name": "K2 Inbox Outbound Token"
+     }
+    }
+   },
+   {
+    "id": "f2ce5e98-89b0-4e13-b6aa-01feb5fe0e53",
+    "name": "Normalize Inbox Request",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     500,
+     300
+    ],
+    "parameters": {
+     "jsCode": "const b=$json.body&&typeof $json.body==='object'?$json.body:{};const authorized=true;const action=String(b.action||'').trim().toLowerCase();const text=String(b.message_text||b.message||b.text||'').trim();const cid=String(b.client_message_id||b.clientMessageId||'').trim();return {json:{authorized,auth_method:'n8n_header_auth',action,clinic_id:String(b.clinic_id||'').trim(),conversation_id:String(b.conversation_id||'').trim(),patient_id:String(b.patient_id||'').trim(),channel_id:String(b.channel_id||'').trim(),staff_user_id:String(b.staff_user_id||'').trim(),message_text:text,client_message_id:cid,correlation_id:String(b.correlation_id||b.correlationId||cid||'').trim(),resolution_note:String(b.resolution_note||'').trim(),valid:['takeover','release','send_message'].includes(action)&&(action!=='send_message'||Boolean(text&&cid))}}",
+     "mode": "runOnceForEachItem"
+    }
+   },
+   {
+    "id": "fbd5d0f8-529e-461c-8bf0-2779aafee31c",
+    "name": "Inbox Request Valid?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     760,
+     300
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $json.valid === true }}",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        },
+        "rightValue": true
+       }
+      ],
+      "combinator": "and"
+     }
+    }
+   },
+   {
+    "id": "16c4a3c7-6b3f-471f-b419-d1e1a273d18f",
+    "name": "Route Inbox Action",
+    "type": "n8n-nodes-base.switch",
+    "typeVersion": 3.2,
+    "position": [
+     1000,
+     300
+    ],
+    "parameters": {
+     "rules": {
+      "values": [
+       {
+        "outputKey": "takeover",
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.action }}",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           },
+           "rightValue": "takeover"
+          }
+         ],
+         "combinator": "and"
+        }
+       },
+       {
+        "outputKey": "release",
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.action }}",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           },
+           "rightValue": "release"
+          }
+         ],
+         "combinator": "and"
+        }
+       },
+       {
+        "outputKey": "send_message",
+        "conditions": {
+         "options": {
+          "caseSensitive": true,
+          "typeValidation": "strict"
+         },
+         "conditions": [
+          {
+           "leftValue": "={{ $json.action }}",
+           "operator": {
+            "type": "string",
+            "operation": "equals"
+           },
+           "rightValue": "send_message"
+          }
+         ],
+         "combinator": "and"
+        }
+       }
+      ]
+     },
+     "options": {
+      "fallbackOutput": "extra",
+      "renameFallbackOutput": "Invalid action"
+     }
+    }
+   },
+   {
+    "id": "27d39834-6928-4093-8b90-8940e0c632ea",
+    "name": "Inbox Takeover RPC",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     1240,
+     120
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT public.rpc_inbox_takeover($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,NULLIF($6::text,'')::uuid) AS response",
+     "options": {
+      "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.channel_id,$json.staff_user_id,$json.correlation_id] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "356c06e5-6863-4801-bb68-986ff40e3b13",
+    "name": "Format Inbox RPC Result",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1500,
+     220
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const r=$json.response&&typeof $json.response==='object'?$json.response:{};return {json:{response_body:{ok:r.success===true,code:r.code||'DATABASE_ERROR',handoff_id:r.handoff_id||null,conversation_id:r.conversation_id||null,status:r.status||(r.handoff&&r.handoff.status)||null}}}"
+    }
+   },
+   {
+    "id": "448e9a83-442e-4b24-9f15-1e3d9eaf0964",
+    "name": "Respond Inbox Outbound",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "position": [
+     3320,
+     380
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ $json.response_body || { ok: false, code: \"NO_RESPONSE\" } }}",
+     "options": {
+      "responseCode": "={{ $json.response_body && $json.response_body.ok === true ? 200 : 409 }}"
+     }
+    }
+   },
+   {
+    "id": "e7cd2a3a-cd99-4114-a5cf-967af86f6326",
+    "name": "Inbox Release RPC",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     1240,
+     300
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "SELECT public.rpc_inbox_release($1::uuid,$2::uuid,$3::uuid,$4::uuid,NULLIF($5::text,'')) AS response",
+     "options": {
+      "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.staff_user_id,$json.resolution_note] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "4e6b8a47-a323-4246-95fe-d112e2799ecd",
+    "name": "Prepare Staff Telegram Send",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     1240,
+     540
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "WITH scope AS (SELECT c.id conversation_id,c.clinic_id,c.patient_id,c.channel_id,c.channel_conversation_id channel_patient_id,h.id handoff_id,ch.type,(SELECT s.api_token FROM public.get_channel_secret_db(c.channel_id) s LIMIT 1) token FROM public.conversations c JOIN public.channels ch ON ch.id=c.channel_id AND ch.clinic_id=c.clinic_id AND ch.provider='thikaa' AND lower(ch.type)='telegram' AND ch.status='connected' AND ch.is_enabled=true AND ch.deleted_at IS NULL JOIN public.handoff_requests h ON h.conversation_id=c.id AND h.clinic_id=c.clinic_id AND h.patient_id=c.patient_id AND h.status IN ('REQUESTED','OPEN','ASSIGNED','IN_PROGRESS') AND h.assigned_user_id=$5::uuid WHERE c.id=$2::uuid AND c.clinic_id=$1::uuid AND c.patient_id=$3::uuid AND c.channel_id=$4::uuid AND c.deleted_at IS NULL ORDER BY h.updated_at DESC LIMIT 1),old AS (SELECT status FROM public.webhook_logs WHERE provider='inbox_staff_telegram' AND idempotency_key=$7::text LIMIT 1),reserved AS (INSERT INTO public.webhook_logs(clinic_id,channel_id,provider,idempotency_key,payload,status,received_at,workflow_version,metadata) SELECT s.clinic_id,s.channel_id,'inbox_staff_telegram',$7::text,jsonb_build_object('action','send_message','conversation_id',$2::uuid,'staff_user_id',$5::uuid,'client_message_id',$7::text),'pending',now(),'inbox_outbound_telegram_v1',jsonb_build_object('handoff_id',s.handoff_id) FROM scope s WHERE NOT EXISTS(SELECT 1 FROM old) RETURNING id) SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM scope) THEN 'SCOPE_DENIED' WHEN (SELECT token FROM scope) IS NULL OR btrim((SELECT token FROM scope))='' THEN 'CHANNEL_SECRET_MISSING' WHEN (SELECT status FROM old)='processed' THEN 'DUPLICATE_SENT' WHEN (SELECT status FROM old)='pending' THEN 'IN_PROGRESS' WHEN (SELECT status FROM old)='failed' THEN 'FAILED_PREVIOUS_ATTEMPT' WHEN NOT EXISTS(SELECT 1 FROM reserved) THEN 'RESERVATION_CONFLICT' ELSE 'READY' END send_state,(SELECT conversation_id FROM scope) conversation_id,(SELECT clinic_id FROM scope) clinic_id,(SELECT patient_id FROM scope) patient_id,(SELECT channel_id FROM scope) channel_id,(SELECT channel_patient_id FROM scope) channel_patient_id,(SELECT handoff_id FROM scope) handoff_id,(SELECT token FROM scope) thikaa_api_token,$6::text message_text,$7::text client_message_id,$5::uuid staff_user_id",
+     "options": {
+      "queryReplacement": "={{ [$json.clinic_id,$json.conversation_id,$json.patient_id,$json.channel_id,$json.staff_user_id,$json.message_text,\"inbox-staff:\"+$json.client_message_id] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "934b25c6-ddd7-4558-a017-e37fa96b948a",
+    "name": "Staff Send Ready?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     1500,
+     540
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $json.send_state }}",
+        "operator": {
+         "type": "string",
+         "operation": "equals"
+        },
+        "rightValue": "READY"
+       }
+      ],
+      "combinator": "and"
+     }
+    }
+   },
+   {
+    "id": "72a3d0c2-1e73-4110-a894-72a6512c37c4",
+    "name": "Send Staff Telegram Message",
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.5,
+    "retryOnFail": false,
+    "onError": "continueRegularOutput",
+    "position": [
+     1760,
+     480
+    ],
+    "parameters": {
+     "method": "POST",
+     "url": "https://thikaa.com/thik_tenant_hamedadel/api/messaging/?action=send",
+     "sendHeaders": true,
+     "specifyHeaders": "keypair",
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "Authorization",
+        "value": "={{ $json.thikaa_api_token ? \"Bearer \"+$json.thikaa_api_token : \"\" }}"
+       },
+       {
+        "name": "Content-Type",
+        "value": "application/json"
+       }
+      ]
+     },
+     "sendBody": true,
+     "contentType": "json",
+     "specifyBody": "json",
+     "jsonBody": "={{ JSON.stringify({ channel: \"tg\", to: $json.channel_patient_id, message: $json.message_text }) }}",
+     "options": {
+      "response": {
+       "fullResponse": true,
+       "neverError": true,
+       "responseFormat": "json"
+      },
+      "timeout": 15000
+     }
+    }
+   },
+   {
+    "id": "1853bfd4-0add-484f-8981-776f77eaaa73",
+    "name": "Restore Staff Send Context",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     2020,
+     480
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const s=$('Prepare Staff Telegram Send').first().json||{};\n// Strip the provider token before it rides into downstream items / execution data.\nconst { thikaa_api_token, ...safe } = s;\nreturn {json:{...safe,provider_response:$json}}"
+    }
+   },
+   {
+    "id": "c0ed7155-7cfa-48c7-85a7-1cdd0f8ba180",
+    "name": "Interpret Telegram Result",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     2280,
+     480
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "const r=$json.provider_response||{};const statusCode=Number(r.statusCode??r.status??0);const b=r.body&&typeof r.body==='object'?r.body:r;const delivery=String(b.delivery||r.delivery||'').trim().toLowerCase();const failed=Boolean(b.error)||b.success===false||b.ok===false||['failed','rejected','error'].includes(delivery);const positive=b.success===true||b.ok===true||['sent','delivered','success'].includes(delivery);const delivered=!failed&&((statusCode>=200&&statusCode<300)||positive);return {json:{...$json,delivered,provider_status_code:statusCode||(positive?200:0),provider_error:b.error||b.message||''}}",
+     "parameters": {
+      "jsCode": "const r=$json.provider_response&&typeof $json.provider_response==='object'?$json.provider_response:{};const c=Number(r.statusCode||r.status||0);const b=r.body&&typeof r.body==='object'?r.body:r;const failed=Boolean(b&&(b.error||b.success===false||b.ok===false));return {json:{...$json,delivered:c>=200&&c<300&&!failed,provider_status_code:c||0,provider_error:failed?String(b.error||b.message||'telegram_provider_rejected'):''}}"
+     }
+    }
+   },
+   {
+    "id": "6551cb2b-51b6-4b85-9604-b98cbe9c0d41",
+    "name": "Telegram Delivery Confirmed?",
+    "type": "n8n-nodes-base.if",
+    "typeVersion": 2.2,
+    "position": [
+     2540,
+     480
+    ],
+    "parameters": {
+     "conditions": {
+      "options": {
+       "caseSensitive": true,
+       "typeValidation": "strict"
+      },
+      "conditions": [
+       {
+        "leftValue": "={{ $json.delivered === true }}",
+        "operator": {
+         "type": "boolean",
+         "operation": "true",
+         "singleValue": true
+        },
+        "rightValue": true
+       }
+      ],
+      "combinator": "and"
+     }
+    }
+   },
+   {
+    "id": "c3edc609-8276-4c18-ab2d-d523ece946ae",
+    "name": "Finalize Staff Telegram Success",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     2800,
+     380
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "WITH l AS (UPDATE public.webhook_logs SET status='processed',error_message=NULL,metadata=COALESCE(metadata,'{}'::jsonb)||jsonb_build_object('provider_status_code',$8::integer,'delivered_at',now()) WHERE provider='inbox_staff_telegram' AND idempotency_key=$1::text AND status='pending' RETURNING clinic_id),m AS (INSERT INTO public.messages(id,conversation_id,clinic_id,patient_id,direction,sender_type,content,message_status,received_at,metadata,sent_by_staff_id) SELECT md5($1::text||':message')::uuid,$2::uuid,$3::uuid,$4::uuid,'outgoing','clinic',$5::text,'sent',now(),jsonb_build_object('source','inbox_dashboard','handoff_id',$6::uuid,'client_message_id',$1::text,'provider_status_code',$8::integer),$9::uuid FROM l ON CONFLICT(id) DO NOTHING RETURNING id) UPDATE public.conversations SET last_activity_at=now(),updated_at=now() WHERE id=$2::uuid AND clinic_id=$3::uuid AND patient_id=$4::uuid RETURNING $2::uuid conversation_id,$1::text client_message_id,(SELECT id FROM m) message_id",
+     "options": {
+      "queryReplacement": "={{ [$json.client_message_id,$json.conversation_id,$json.clinic_id,$json.patient_id,$json.message_text,$json.handoff_id,$json.provider_status_code,$json.provider_status_code,$json.staff_user_id] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "8ea473f0-bddf-447c-a841-0618aab241b8",
+    "name": "Format Staff Telegram Success",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     3060,
+     380
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "return {json:{response_body:{ok:true,code:'STAFF_MESSAGE_SENT',conversation_id:$json.conversation_id||null,message_id:$json.message_id||null,client_message_id:$json.client_message_id||null}}}"
+    }
+   },
+   {
+    "id": "232aac6f-e0ac-49bb-aa93-447f4d028358",
+    "name": "Finalize Staff Telegram Failure",
+    "type": "n8n-nodes-base.postgres",
+    "typeVersion": 2.7,
+    "retryOnFail": true,
+    "maxTries": 2,
+    "waitBetweenTries": 1000,
+    "position": [
+     2800,
+     600
+    ],
+    "parameters": {
+     "operation": "executeQuery",
+     "query": "UPDATE public.webhook_logs SET status='failed',error_message=NULLIF($2::text,''),metadata=COALESCE(metadata,'{}'::jsonb)||jsonb_build_object('provider_status_code',$3::integer,'failed_at',now()) WHERE provider='inbox_staff_telegram' AND idempotency_key=$1::text AND status='pending' RETURNING $1::text client_message_id,$3::integer provider_status_code",
+     "options": {
+      "queryReplacement": "={{ [$json.client_message_id,$json.provider_error||\"telegram_delivery_unknown_or_rejected\",$json.provider_status_code||0] }}"
+     }
+    },
+    "credentials": {
+     "postgres": {
+      "id": "fHnmSTQ08g9kcLZi",
+      "name": "Postgres account"
+     }
+    }
+   },
+   {
+    "id": "bec72911-d5a7-4c8b-b454-40b848fc18a2",
+    "name": "Format Staff Telegram Failure",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     3060,
+     600
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "return {json:{response_body:{ok:false,code:'TELEGRAM_DELIVERY_FAILED',client_message_id:$json.client_message_id||null,provider_status_code:$json.provider_status_code||null}}}"
+    }
+   },
+   {
+    "id": "c7d4775d-5516-4672-bfa8-b6fd4b13aeca",
+    "name": "Format Staff Send Not Ready",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [
+     1760,
+     720
+    ],
+    "parameters": {
+     "mode": "runOnceForEachItem",
+     "jsCode": "return {json:{response_body:{ok:false,code:$json.send_state||'SEND_NOT_STARTED',conversation_id:$json.conversation_id||null}}}"
+    }
+   },
+   {
+    "id": "72310455-24b1-4036-9fbc-d4749ed755bc",
+    "name": "Respond Inbox Unauthorized",
+    "type": "n8n-nodes-base.respondToWebhook",
+    "typeVersion": 1.5,
+    "position": [
+     760,
+     40
+    ],
+    "parameters": {
+     "respondWith": "json",
+     "responseBody": "={{ { ok: false, code: \"UNAUTHORIZED\" } }}",
+     "options": {
+      "responseCode": 401
+     }
+    }
+   }
+  ],
+  "connections": {
+   "Inbox Outbound Telegram Webhook": {
+    "main": [
+     [
+      {
+       "node": "Normalize Inbox Request",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Normalize Inbox Request": {
+    "main": [
+     [
+      {
+       "node": "Inbox Request Valid?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Inbox Request Valid?": {
+    "main": [
+     [
+      {
+       "node": "Route Inbox Action",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Respond Inbox Unauthorized",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Route Inbox Action": {
+    "main": [
+     [
+      {
+       "node": "Inbox Takeover RPC",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Inbox Release RPC",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Prepare Staff Telegram Send",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Format Staff Send Not Ready",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Inbox Takeover RPC": {
+    "main": [
+     [
+      {
+       "node": "Format Inbox RPC Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Format Inbox RPC Result": {
+    "main": [
+     [
+      {
+       "node": "Respond Inbox Outbound",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Inbox Release RPC": {
+    "main": [
+     [
+      {
+       "node": "Format Inbox RPC Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Prepare Staff Telegram Send": {
+    "main": [
+     [
+      {
+       "node": "Staff Send Ready?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Staff Send Ready?": {
+    "main": [
+     [
+      {
+       "node": "Send Staff Telegram Message",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Format Staff Send Not Ready",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Send Staff Telegram Message": {
+    "main": [
+     [
+      {
+       "node": "Restore Staff Send Context",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Restore Staff Send Context": {
+    "main": [
+     [
+      {
+       "node": "Interpret Telegram Result",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Interpret Telegram Result": {
+    "main": [
+     [
+      {
+       "node": "Telegram Delivery Confirmed?",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Telegram Delivery Confirmed?": {
+    "main": [
+     [
+      {
+       "node": "Finalize Staff Telegram Success",
+       "type": "main",
+       "index": 0
+      }
+     ],
+     [
+      {
+       "node": "Finalize Staff Telegram Failure",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Finalize Staff Telegram Success": {
+    "main": [
+     [
+      {
+       "node": "Format Staff Telegram Success",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Format Staff Telegram Success": {
+    "main": [
+     [
+      {
+       "node": "Respond Inbox Outbound",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Finalize Staff Telegram Failure": {
+    "main": [
+     [
+      {
+       "node": "Format Staff Telegram Failure",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Format Staff Telegram Failure": {
+    "main": [
+     [
+      {
+       "node": "Respond Inbox Outbound",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   },
+   "Format Staff Send Not Ready": {
+    "main": [
+     [
+      {
+       "node": "Respond Inbox Outbound",
+       "type": "main",
+       "index": 0
+      }
+     ]
+    ]
+   }
+  },
+  "nodeGroups": [],
+  "authors": "Meruna Admin",
+  "name": null,
+  "description": null,
+  "autosaved": false,
+  "createdAt": "2026-09-22T20:13:16.237Z",
+  "updatedAt": "2026-09-22T20:13:16.237Z",
+  "workflowPublishHistory": [
+   {
+    "id": 78,
+    "workflowId": "L1o7819MfEuuntZK",
+    "versionId": "efa19885-5aa0-4e86-8d24-85e50f79a5fc",
+    "event": "activated",
+    "userId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T20:13:16.345Z"
+   }
+  ]
+ }
+}

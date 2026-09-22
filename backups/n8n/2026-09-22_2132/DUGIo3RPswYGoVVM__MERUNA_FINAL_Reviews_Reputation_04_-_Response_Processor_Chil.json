@@ -1,0 +1,91 @@
+{
+ "id": "DUGIo3RPswYGoVVM",
+ "name": "MERUNA / FINAL / Reviews & Reputation / 04 - Response Processor Child",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:08.197Z",
+ "updatedAt": "2026-09-22T20:13:02.179Z",
+ "isArchived": false,
+ "versionId": "df5b48d9-b73f-42d4-900e-582867206143",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "79328866-bd3a-4817-92de-10904aa59122",
+   "name": "When Executed by Another Workflow",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1,
+   "position": [
+    -464,
+    -144
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "60fa8ed7-a6ea-4588-8b21-3aa0ae199175",
+   "name": "Record Review Response",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.6,
+   "position": [
+    -144,
+    -144
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.review_record_response('{{$json.review_request_id}}'::uuid,{{$json.rating}}::smallint,'{{ $json.comment ? \"'\" + $json.comment.replace(/'/g, \"''\") + \"'\" : \"NULL\" }}'::text,'{{ $json.source ? \"'\" + $json.source + \"'\" : \"'INTERNAL'\" }}'::text,'{{ $json.submitted_at ? \"'\" + $json.submitted_at + \"'\" : \"'now()'\" }}'::timestamptz) AS response;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  }
+ ],
+ "connections": {
+  "When Executed by Another Workflow": {
+   "main": [
+    [
+     {
+      "node": "Record Review Response",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "DUGIo3RPswYGoVVM",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:08.197Z",
+   "updatedAt": "2026-09-22T19:25:08.197Z"
+  }
+ ],
+ "activeVersion": null
+}

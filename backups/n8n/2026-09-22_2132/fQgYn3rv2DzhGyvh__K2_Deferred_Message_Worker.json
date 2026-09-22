@@ -1,0 +1,488 @@
+{
+ "id": "fQgYn3rv2DzhGyvh",
+ "name": "K2 Deferred Message Worker",
+ "description": null,
+ "active": false,
+ "activeVersionId": null,
+ "createdAt": "2026-09-22T19:25:18.003Z",
+ "updatedAt": "2026-09-22T20:13:06.518Z",
+ "isArchived": false,
+ "versionId": "95263a6d-0d22-4d63-ba5f-87b3848dcc7a",
+ "versionCounter": 3,
+ "sourceWorkflowId": null,
+ "triggerCount": 0,
+ "nodes": [
+  {
+   "id": "f9e512a5-903e-4e59-8ef6-bc4127f04693",
+   "name": "Every 5 Seconds",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.3,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "seconds",
+       "secondsInterval": 5
+      }
+     ]
+    },
+    "skipDurableScheduler": false
+   }
+  },
+  {
+   "id": "d4e2bcdf-3e66-437d-9996-c85ebd5e7bd6",
+   "name": "Claim Deferred Batch",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    240,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.k2_claim_deferred_batch_v2('k2-deferred-worker', 120) LIMIT 1;",
+    "options": {}
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "d3a4e839-9ce7-4f86-a73b-a7ba14930abe",
+   "name": "IF Deferred Batch Found",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    480,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "bc803c00-ffd6-4223-a2fc-e7469f7dfa0d",
+       "leftValue": "={{ $json.batch_id }}",
+       "operator": {
+        "operation": "notEmpty",
+        "singleValue": true,
+        "type": "string"
+       },
+       "rightValue": ""
+      }
+     ],
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     }
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "d05cdd04-e11a-45ea-aed6-6d6661a54ab8",
+   "name": "Build Deferred Core Payload",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    720,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "language": "javaScript",
+    "jsCode": "const b = $json || {};\nconst batchId = String(b.batch_id || '');\nconst items = Array.isArray(b.message_items) ? b.message_items : [];\nconst last = items[items.length - 1] || {};\nconst sourceEventId = `k2-deferred-${batchId}`;\nreturn { json: {\n  clinic_id: b.clinic_id, patient_id: b.patient_id, conversation_id: b.conversation_id,\n  channel_type: b.channel_type, channel_id: b.channel_id,\n  message_id: sourceEventId, source_event_id: sourceEventId, operation_id: sourceEventId,\n  message_text: String(b.merged_message_text || '').slice(0, 6000),\n  received_at: last.received_at || new Date().toISOString(),\n  metadata: { k2_deferred_replay: true, k2_deferred_batch_id: batchId, k2_deferred_item_count: items.length, k2_deferred_message_ids: items.map((x) => x.message_id).filter(Boolean) },\n  _worker: { batch_id: batchId, claim_token: b.claim_token, attempts: b.attempts, item_count: items.length, priority: b.priority === true, conversation_lease_token: b.conversation_lease_token }\n} };"
+   }
+  },
+  {
+   "id": "5b90545d-6f31-4230-ae9c-dfcd60f234b1",
+   "name": "Call K2 Core For Deferred Batch",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "retryOnFail": false,
+   "position": [
+    960,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://core-engine-production-970a.up.railway.app/core-engine/message",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "contentType": "json",
+    "jsonBody": "={{ JSON.stringify($json) }}",
+    "options": {
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "fullResponse": false
+      }
+     }
+    },
+    "timeout": 90000,
+    "specifyBody": "json"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "SO91NTrTgX172Ew9",
+     "name": "K2 Internal Core Engine Auth"
+    }
+   }
+  },
+  {
+   "id": "1190e545-a83a-4f73-9e24-3e37f28bf0ca",
+   "name": "Complete Deferred Batch",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    1200,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.k2_complete_deferred_batch_v2($1::uuid, $2::uuid, ($3::text = 'success'), $4::text) LIMIT 2;",
+    "options": {
+     "queryReplacement": "={{ [$(\"Build Deferred Core Payload\").first().json._worker.batch_id, $(\"Build Deferred Core Payload\").first().json._worker.claim_token, $(\"Validate Deferred Delivery\").first().json.delivery_success === true ? \"success\" : \"failed\", JSON.stringify($(\"Validate Deferred Delivery\").first().json).slice(0, 1000)] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "2301c5f2-f158-4232-b931-514b631771df",
+   "name": "Log K2 Deferred Outcome",
+   "notesInFlow": true,
+   "notes": "Operational telemetry only. Stores batch outcome and attempt count; no message content and no token quota.",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "onError": "continueRegularOutput",
+   "position": [
+    1440,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT * FROM public.k2_log_operational_event(\n  CASE WHEN $1::text = 'completed' THEN 'deferred_completed' ELSE 'deferred_failed' END,\n  $2::uuid,\n  $3::uuid,\n  $4::uuid,\n  $1::text,\n  CASE WHEN $1::text = 'completed' THEN 'processed' ELSE 'requeued_or_dead' END,\n  jsonb_build_object('batch_id', $5::text, 'attempts', $6::integer, 'item_count', $7::integer, 'worker_status', $8::text)\n) LIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [$(\"Complete Deferred Batch\").first().json.final_status || \"failed\", $(\"Build Deferred Core Payload\").first().json.clinic_id, $(\"Build Deferred Core Payload\").first().json.patient_id, $(\"Build Deferred Core Payload\").first().json.conversation_id, $(\"Build Deferred Core Payload\").first().json._worker.batch_id, $(\"Build Deferred Core Payload\").first().json._worker.attempts || 0, $(\"Build Deferred Core Payload\").first().json._worker.item_count || 0, $(\"Complete Deferred Batch\").first().json.updated === true ? \"updated\" : \"claim_lost\"] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "k2-build-deferred-delivery",
+   "name": "Build Deferred Delivery Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1200,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "language": "javaScript",
+    "jsCode": "const core = $json || {};\nconst source = $('Build Deferred Core Payload').first().json || {};\nconst outgoingMessageId = String(core.outgoing_message_id || '').trim();\nconst deliveryPayload = outgoingMessageId ? { conversation_id: source.conversation_id, message_id: outgoingMessageId } : null;\nconst alreadyProcessed = core.duplicate === true && String(core.message || '') === 'already_processed';\nreturn { json: { ...core, _deferred_delivery: { conversation_id: source.conversation_id, message_id: outgoingMessageId || null, payload: deliveryPayload, missing_message_id: !outgoingMessageId, already_processed: alreadyProcessed } } };"
+   }
+  },
+  {
+   "id": "k2-call-deferred-dispatcher",
+   "name": "Call K2 Outbound Dispatcher",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1440,
+    0
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "https://n8n-production-33955.up.railway.app/webhook/inbox-outbound",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "contentType": "json",
+    "jsonBody": "={{ JSON.stringify($json._deferred_delivery.payload || {}) }}",
+    "options": {
+     "response": {
+      "response": {
+       "responseFormat": "text",
+       "fullResponse": false
+      }
+     },
+     "timeout": 30000
+    },
+    "retryOnFail": false,
+    "specifyBody": "json"
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "cK3Q2aKzyXTJoCFX",
+     "name": "Header Auth account"
+    }
+   }
+  },
+  {
+   "id": "k2-validate-deferred-delivery",
+   "name": "Validate Deferred Delivery",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1680,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForEachItem",
+    "language": "javaScript",
+    "jsCode": "const raw = $json;\nconst text = typeof raw === 'string' ? raw : String(raw?.data ?? raw?.responseText ?? raw?.body ?? raw?.response ?? '');\nconst trimmed = text.trim();\nconst prior = $('Build Deferred Delivery Request').first().json || {};\nconst alreadyProcessed = prior._deferred_delivery?.already_processed === true;\nconst success = alreadyProcessed || /^ok:\\s*[0-9a-f-]{36}$/i.test(trimmed) || trimmed === 'skipped: already_delivered';\nreturn { json: { ...((raw && typeof raw === 'object') ? raw : {}), delivery_success: success, delivery_response: trimmed.slice(0, 500) } };\n"
+   }
+  },
+  {
+   "id": "k2-release-deferred-lease",
+   "name": "Release K2 Conversation Lease",
+   "type": "n8n-nodes-base.postgres",
+   "typeVersion": 2.7,
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "position": [
+    2160,
+    0
+   ],
+   "parameters": {
+    "operation": "executeQuery",
+    "query": "SELECT public.k2_release_deferred_conversation_lease($1::uuid, $2::uuid) AS released LIMIT 1;",
+    "options": {
+     "queryReplacement": "={{ [$(\"Build Deferred Core Payload\").first().json.conversation_id, $(\"Build Deferred Core Payload\").first().json._worker.conversation_lease_token] }}"
+    }
+   },
+   "credentials": {
+    "postgres": {
+     "id": "fHnmSTQ08g9kcLZi",
+     "name": "Postgres account"
+    }
+   }
+  },
+  {
+   "id": "k2-if-already-processed",
+   "name": "IF Already Processed",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1040,
+    -160
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "already-processed-condition",
+       "leftValue": "={{ $json._deferred_delivery.already_processed }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   }
+  }
+ ],
+ "connections": {
+  "Every 5 Seconds": {
+   "main": [
+    [
+     {
+      "node": "Claim Deferred Batch",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Claim Deferred Batch": {
+   "main": [
+    [
+     {
+      "node": "IF Deferred Batch Found",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Deferred Batch Found": {
+   "main": [
+    [
+     {
+      "node": "Build Deferred Core Payload",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    []
+   ]
+  },
+  "Build Deferred Core Payload": {
+   "main": [
+    [
+     {
+      "node": "Call K2 Core For Deferred Batch",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call K2 Core For Deferred Batch": {
+   "main": [
+    [
+     {
+      "node": "Build Deferred Delivery Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Complete Deferred Batch": {
+   "main": [
+    [
+     {
+      "node": "Release K2 Conversation Lease",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Deferred Delivery Request": {
+   "main": [
+    [
+     {
+      "node": "IF Already Processed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Call K2 Outbound Dispatcher": {
+   "main": [
+    [
+     {
+      "node": "Validate Deferred Delivery",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Validate Deferred Delivery": {
+   "main": [
+    [
+     {
+      "node": "Complete Deferred Batch",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Release K2 Conversation Lease": {
+   "main": [
+    [
+     {
+      "node": "Log K2 Deferred Outcome",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "IF Already Processed": {
+   "main": [
+    [
+     {
+      "node": "Validate Deferred Delivery",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Call K2 Outbound Dispatcher",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "nodeGroups": [],
+ "settings": {
+  "executionOrder": "v1",
+  "availableInMCP": true
+ },
+ "staticData": null,
+ "pinData": null,
+ "meta": null,
+ "tags": [],
+ "shared": [
+  {
+   "role": "workflow:owner",
+   "workflowId": "fQgYn3rv2DzhGyvh",
+   "projectId": "vXzOWoss1bv6KrXc",
+   "project": {
+    "id": "vXzOWoss1bv6KrXc",
+    "name": "Meruna Admin <admin@meruna.systems>",
+    "type": "personal",
+    "icon": null,
+    "description": null,
+    "customTelemetryTags": [],
+    "creatorId": "73a68315-fe5c-4212-a153-a687bcb0765c",
+    "createdAt": "2026-09-22T19:13:22.584Z",
+    "updatedAt": "2026-09-22T19:19:11.523Z"
+   },
+   "createdAt": "2026-09-22T19:25:18.003Z",
+   "updatedAt": "2026-09-22T19:25:18.003Z"
+  }
+ ],
+ "activeVersion": null
+}
