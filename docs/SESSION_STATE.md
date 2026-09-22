@@ -24,7 +24,10 @@ n8n-production-33955، (3) تليجرام: setWebhook على رابط n8n. شغ�
 2. **الـ deferred worker in-process** (`app/services/deferred_worker.py`): بورت حرفي لـ 'K2 Deferred Message Worker' — claim كل 5 ثواني بنفس الدوال (k2_claim_deferred_batch_v2/complete/release/log) + replay عبر النواة in-process (metadata.k2_deferred_replay بيرخيص التوقيع) + التسليم لسه عبر الـ n8n dispatcher بنفس الـ auth. شغال من الـ lifespan.
 3. **pyflakes gate مسك عطل قبل النشر**: httpx/json ناقصين في الـ worker — البوابة الجديدة اشتغلت زي ما اتصممت.
 4. الإعدادات الجديدة على Railway: TELEGRAM_ALERT_BOT_TOKEN/CHAT_ID، OUTBOUND_DISPATCHER_URL/TOKEN، DEFERRED_WORKER_ENABLED=true.
-5. 129 اختبار أخضر.
+5. 131 اختبار أخضر — شامل سيناريو السباق على السلوت.
+6. **إصلاح سباق السلوت (55P03)** — من الفحص العميق الخارجي: لما اتنين يأكدوا نفس السلوت، الداتابيز بترفض التاني بـ FOR UPDATE + raise — كان بيوصل للمريض 500 خام. دلوقتي بيتقفل FAILED_FINAL/NOT_EXECUTED في الدفتر ويرد SLOT_UNAVAILABLE لطيف من الكومبوزر. أخطاء البنية الحقيقية بتفضل تطلع 500 مع إقفال الدفتر INCONCLUSIVE (اختباران منفصلان).
+7. **حفظ اسم الدكتور المرفوض** في booking_context.doctor_name_rejected قبل مسحه من الكونتراكت (JS parity للمسح محفوظ — المعلومة اتنقلت للـ audit بدل ما تضيع).
+8. **توثيق ثابت target_live**: target بدون expires_at يعيش للأبد (عكس offer_live) — كل منشئ target لازم يحط expires_at (موثق عند الدالة).
 
 ## دفعة 2026-09-22 مساءً
 1. **إصلاح عطل حجز حي (تليجرام)**: رسالة تأكيد الحجز كانت تضرب 500 INTERNAL_ERROR — `NameError: _dig` في orchestrator.py سطر 1110/1159 (مسار P47/P42 binding) — الدالة كانت ناقصة من فيتشر offer-binding أصلاً واختبارات الرحلة كانت بتعدي سطرها بالقصور الذاتي. أضيفت الدالة بدلالات باقي الوحدات.
